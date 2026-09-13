@@ -20,7 +20,7 @@ export function validCreativePlan() {
       hashtags: ["#daiduong", "#khampha", "#shorts"],
       scenes: Array.from({ length: 10 }, (_, sceneIndex) => ({
         id: `scene-${String(sceneIndex + 1).padStart(2, "0")}`,
-        durationSeconds: 8,
+        durationSeconds: 8 as const,
         visual: `Khung cảnh dưới biển ${sceneIndex + 1}`,
         motionPrompt: `Máy quay tiến chậm trong cảnh ${sceneIndex + 1}`,
         narration: `Lời kể ngắn cho cảnh ${sceneIndex + 1}.`,

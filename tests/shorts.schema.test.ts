@@ -42,7 +42,7 @@ describe("shorts creative plan schema", () => {
 
   it("rejects non-eight-second scenes", () => {
     const plan = validCreativePlan();
-    plan.episodes[0].scenes[0].durationSeconds = 7;
+    (plan.episodes[0].scenes[0] as { durationSeconds: number }).durationSeconds = 7;
 
     expect(() => parseCreativePlan(plan)).toThrow();
   });
