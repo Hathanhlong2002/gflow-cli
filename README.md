@@ -427,6 +427,25 @@ It automates *your own* Google Flow session through a real browser; you are resp
 complying with Google's Terms of Service and any usage limits. It does not bypass login, solve
 CAPTCHAs, rotate accounts, strip watermarks, or evade rate limits.
 
+## Workspace development status
+
+- **Upstream:** [swissmarley/gflow-cli](https://github.com/swissmarley/gflow-cli)
+- **Workspace fork:** [Hathanhlong2002/gflow-cli](https://github.com/Hathanhlong2002/gflow-cli)
+- **Why this fork exists:** it is the foundation for Flow Shorts Factory, a local tool that will
+  turn a topic into ten approximately 80-second vertical videos using Gemini for story and scene
+  planning, Google Flow for image/video generation, FFmpeg for assembly, and the official TikTok
+  and YouTube APIs for publishing.
+- **Workspace changes:** no implementation changes yet; this checkout currently matches upstream
+  version `1.1.1`.
+- **Verification on 13 September 2026:** all 82 tests, the TypeScript build, and ESLint pass.
+  `npm audit --omit=dev` reports no production vulnerabilities. The development dependency tree
+  reports eight advisories (two moderate, five high, one critical), primarily through the old
+  Vitest/Vite toolchain, and must be upgraded before feature development.
+- **Known limitations:** Flow browser automation is unofficial and can break when the Flow UI
+  changes. Authentication, CAPTCHA, quota, and account changes remain manual; the tool must not
+  bypass service limits. Public TikTok and YouTube publishing requires approved API applications,
+  OAuth authorization, and compliance with each platform's policies.
+
 ## License
 
 [MIT](LICENSE) © swissmarley
