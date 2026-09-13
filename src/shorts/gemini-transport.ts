@@ -1,15 +1,33 @@
+import { Buffer } from "node:buffer";
 import { z } from "zod";
 
 const DEFAULT_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/";
 const DEFAULT_TIMEOUT_MS = 120_000;
-const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+const MAX_JSON_RESPONSE_BYTES = 2 * 1024 * 1024;
+const MAX_IMAGE_RESPONSE_BYTES = 28_500_000;
+const MAX_AUDIO_RESPONSE_BYTES = 12 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
+const MAX_AUDIO_BYTES = 8 * 1024 * 1024;
 
 const geminiEnvelopeSchema = z
   .object({
     candidates: z.array(
       z.object({
         content: z.object({
-          parts: z.array(z.object({ text: z.string().optional() }).passthrough())
+          parts: z.array(
+            z
+              .object({
+                text: z.string().optional(),
+                inlineData: z
+                  .object({
+                    mimeType: z.string(),
+                    data: z.string()
+                  })
+                  .strict()
+                  .optional()
+              })
+              .passthrough()
+          )
         }).passthrough()
       }).passthrough()
     )
@@ -25,6 +43,23 @@ export interface GeminiJsonRequest {
 
 export interface GeminiTransport {
   generateJson(input: GeminiJsonRequest): Promise<unknown>;
+}
+
+export interface BinaryMedia {
+  mimeType: "image/jpeg" | "image/png";
+  bytes: Uint8Array;
+}
+
+export interface PcmAudio {
+  sampleRate: 24000;
+  channels: 1;
+  bitsPerSample: 16;
+  pcm: Uint8Array;
+}
+
+export interface GeminiMediaTransport {
+  generateImage(input: { model: string; prompt: string; aspectRatio: "9:16" }): Promise<BinaryMedia>;
+  generateSpeech(input: { model: string; text: string; voice: string }): Promise<PcmAudio>;
 }
 
 export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -47,9 +82,9 @@ export interface GoogleGeminiTransportOptions {
   timeoutMs?: number;
 }
 
-async function readLimitedBody(response: Response): Promise<string> {
+async function readLimitedBody(response: Response, maximumBytes: number): Promise<string> {
   const declaredLength = response.headers.get("content-length");
-  if (declaredLength !== null && Number(declaredLength) > MAX_RESPONSE_BYTES) {
+  if (declaredLength !== null && Number(declaredLength) > maximumBytes) {
     await response.body?.cancel().catch(() => undefined);
     throw new GeminiTransportError("Gemini response is too large", "RESPONSE_TOO_LARGE", response.status);
   }
@@ -63,7 +98,7 @@ async function readLimitedBody(response: Response): Promise<string> {
     const result = await reader.read();
     if (result.done) break;
     totalBytes += result.value.byteLength;
-    if (totalBytes > MAX_RESPONSE_BYTES) {
+    if (totalBytes > maximumBytes) {
       await reader.cancel().catch(() => undefined);
       throw new GeminiTransportError("Gemini response is too large", "RESPONSE_TOO_LARGE", response.status);
     }
@@ -79,7 +114,21 @@ async function readLimitedBody(response: Response): Promise<string> {
   return new TextDecoder().decode(bytes);
 }
 
-export class GoogleGeminiTransport implements GeminiTransport {
+function decodeBase64(data: string, maximumBytes: number): Uint8Array {
+  if (data.length === 0 || data.length % 4 !== 0 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(data)) {
+    throw new GeminiTransportError("Gemini returned invalid base64 media", "INVALID_BASE64");
+  }
+  const decoded = Buffer.from(data, "base64");
+  if (decoded.toString("base64") !== data) {
+    throw new GeminiTransportError("Gemini returned invalid base64 media", "INVALID_BASE64");
+  }
+  if (decoded.byteLength > maximumBytes) {
+    throw new GeminiTransportError("Gemini decoded media is too large", "MEDIA_TOO_LARGE");
+  }
+  return new Uint8Array(decoded);
+}
+
+export class GoogleGeminiTransport implements GeminiTransport, GeminiMediaTransport {
   private readonly apiKey: string;
   private readonly endpointBase: URL;
   private readonly fetcher: FetchLike;
@@ -96,11 +145,11 @@ export class GoogleGeminiTransport implements GeminiTransport {
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
 
-  async generateJson(input: GeminiJsonRequest): Promise<unknown> {
-    if (!/^[a-zA-Z0-9._-]+$/.test(input.model)) {
+  private async generateContent(model: string, body: Record<string, unknown>, maximumBytes: number): Promise<z.infer<typeof geminiEnvelopeSchema>> {
+    if (!/^[a-zA-Z0-9._-]+$/.test(model)) {
       throw new GeminiTransportError("Invalid Gemini model name", "INVALID_MODEL");
     }
-    const endpoint = new URL(`models/${input.model}:generateContent`, this.endpointBase);
+    const endpoint = new URL(`models/${model}:generateContent`, this.endpointBase);
 
     let response: Response;
     try {
@@ -110,14 +159,7 @@ export class GoogleGeminiTransport implements GeminiTransport {
           "content-type": "application/json",
           "x-goog-api-key": this.apiKey
         },
-        body: JSON.stringify({
-          system_instruction: { parts: [{ text: input.systemInstruction }] },
-          contents: [{ role: "user", parts: [{ text: input.prompt }] }],
-          generationConfig: {
-            responseMimeType: "application/json",
-            responseJsonSchema: input.responseSchema
-          }
-        }),
+        body: JSON.stringify(body),
         signal: AbortSignal.timeout(this.timeoutMs)
       });
     } catch {
@@ -129,13 +171,28 @@ export class GoogleGeminiTransport implements GeminiTransport {
       throw new GeminiTransportError(`Gemini request failed with HTTP ${response.status}`, "HTTP_ERROR", response.status);
     }
 
-    const responseText = await readLimitedBody(response);
-    let envelope: z.infer<typeof geminiEnvelopeSchema>;
+    const responseText = await readLimitedBody(response, maximumBytes);
     try {
-      envelope = geminiEnvelopeSchema.parse(JSON.parse(responseText) as unknown);
-    } catch {
+      return geminiEnvelopeSchema.parse(JSON.parse(responseText) as unknown);
+    } catch (error) {
+      if (error instanceof GeminiTransportError) throw error;
       throw new GeminiTransportError("Gemini returned an invalid response envelope", "INVALID_RESPONSE");
     }
+  }
+
+  async generateJson(input: GeminiJsonRequest): Promise<unknown> {
+    const envelope = await this.generateContent(
+      input.model,
+      {
+          system_instruction: { parts: [{ text: input.systemInstruction }] },
+          contents: [{ role: "user", parts: [{ text: input.prompt }] }],
+          generationConfig: {
+            responseMimeType: "application/json",
+            responseJsonSchema: input.responseSchema
+          }
+      },
+      MAX_JSON_RESPONSE_BYTES
+    );
 
     const generatedText = envelope.candidates
       .flatMap((candidate) => candidate.content.parts)
@@ -150,5 +207,52 @@ export class GoogleGeminiTransport implements GeminiTransport {
     } catch {
       throw new GeminiTransportError("Gemini generated invalid JSON", "INVALID_GENERATED_JSON");
     }
+  }
+
+  async generateImage(input: { model: string; prompt: string; aspectRatio: "9:16" }): Promise<BinaryMedia> {
+    const prompt = z.string().trim().min(1).max(10_000).parse(input.prompt);
+    const envelope = await this.generateContent(
+      input.model,
+      {
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        generationConfig: {
+          responseModalities: ["IMAGE"],
+          imageConfig: { aspectRatio: input.aspectRatio }
+        }
+      },
+      MAX_IMAGE_RESPONSE_BYTES
+    );
+    const inlineData = envelope.candidates.flatMap((candidate) => candidate.content.parts).find((part) => part.inlineData)?.inlineData;
+    if (!inlineData) throw new GeminiTransportError("Gemini response did not contain inline image data", "MISSING_CONTENT");
+    if (inlineData.mimeType !== "image/jpeg" && inlineData.mimeType !== "image/png") {
+      throw new GeminiTransportError("Gemini returned an unsupported image MIME type", "INVALID_MIME");
+    }
+    return { mimeType: inlineData.mimeType, bytes: decodeBase64(inlineData.data, MAX_IMAGE_BYTES) };
+  }
+
+  async generateSpeech(input: { model: string; text: string; voice: string }): Promise<PcmAudio> {
+    const text = z.string().trim().min(1).max(10_000).parse(input.text);
+    const voice = z.string().trim().min(1).max(100).regex(/^[a-zA-Z0-9._-]+$/).parse(input.voice);
+    const envelope = await this.generateContent(
+      input.model,
+      {
+        contents: [{ role: "user", parts: [{ text }] }],
+        generationConfig: {
+          responseModalities: ["AUDIO"],
+          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } }
+        }
+      },
+      MAX_AUDIO_RESPONSE_BYTES
+    );
+    const inlineData = envelope.candidates.flatMap((candidate) => candidate.content.parts).find((part) => part.inlineData)?.inlineData;
+    if (!inlineData) throw new GeminiTransportError("Gemini response did not contain inline audio data", "MISSING_CONTENT");
+    if (inlineData.mimeType !== "audio/L16;codec=pcm;rate=24000") {
+      throw new GeminiTransportError("Gemini returned an unsupported audio MIME type", "INVALID_MIME");
+    }
+    const pcm = decodeBase64(inlineData.data, MAX_AUDIO_BYTES);
+    if (pcm.byteLength === 0 || pcm.byteLength % 2 !== 0) {
+      throw new GeminiTransportError("Gemini returned invalid 16-bit PCM audio", "INVALID_PCM");
+    }
+    return { sampleRate: 24000, channels: 1, bitsPerSample: 16, pcm };
   }
 }
