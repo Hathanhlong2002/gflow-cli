@@ -610,7 +610,13 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     }
   });
 
-  registerShortsCommands(program, options);
+  registerShortsCommands(program, {
+    ...options,
+    flowAutomationFactory: options.flowAutomationFactory ?? (async ({ profile, headed, browser }) =>
+      options.automation
+        ? { automation: options.automation, close: async () => undefined }
+        : realAutomation(profile, headed, browser))
+  });
 
   const media = program.command("media").description("Inspect project media assets.");
   withSessionOptions(media.command("list").description("List all images and videos in the project with their unique IDs.")).action(async (command) => {

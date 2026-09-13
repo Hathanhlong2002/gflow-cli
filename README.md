@@ -420,10 +420,11 @@ npm test
 
 CI (lint + build + test on Node 20 & 22) runs on every push and pull request.
 
-## Flow Shorts Factory: creative planning
+## Flow Shorts Factory: plan and generate
 
-The first milestone turns one topic into a validated creative manifest with exactly ten episodes
-and ten 8-second scenes per episode. Set the Gemini key through the environment, then run:
+Create a validated story manifest with exactly ten episodes and ten 8-second scenes per episode,
+then generate a vertical opening image, narration WAV, and one Google Flow clip for each scene. Set
+the Gemini key through the environment and plan the series:
 
 ```bash
 export GEMINI_API_KEY="set-this-in-your-shell-secret-manager"
@@ -433,9 +434,25 @@ npm run dev -- shorts plan \
 ```
 
 The command writes `project.json` and `creative-plan.json` beneath the selected output directory.
-It does not yet generate images or videos, spend Google Flow credits, render final media, or
-publish to TikTok/YouTube. The API key is never accepted as a command-line option or written to
-the project files. See the
+Sign in to Flow once through the normal browser window, then start generation:
+
+```bash
+npm run dev -- auth login --profile shorts
+# Complete Google sign-in in the opened Chrome window.
+npm run dev -- shorts generate ./shorts-output/ocean/project.json --profile shorts
+```
+
+The generator saves a `generation.json` journal and checkpoints every validated artifact beneath
+the project directory. If Flow needs login, manual verification, or reaches a quota/rate limit, the
+run pauses and writes `action-required.json`; resolve it yourself, then continue with:
+
+```bash
+npm run dev -- shorts generate ./shorts-output/ocean/project.json --profile shorts --resume
+```
+
+There is no automatic account switching, CAPTCHA handling, or quota bypass. Gemini keys are never
+accepted as command-line arguments or written to project files. This milestone creates source
+clips but does not yet render finished episodes with FFmpeg or publish to TikTok/YouTube. See the
 [approved design](docs/superpowers/specs/2026-09-13-flow-shorts-factory-design.md) for the full
 pipeline and safety constraints.
 
@@ -454,13 +471,13 @@ CAPTCHAs, rotate accounts, strip watermarks, or evade rate limits.
   turn a topic into ten approximately 80-second vertical videos using Gemini for story and scene
   planning, Google Flow for image/video generation, FFmpeg for assembly, and the official TikTok
   and YouTube APIs for publishing.
-- **Workspace changes:** the creative-planning milestone adds a strict 10×10 manifest, atomic local
-  project state, a bounded Gemini structured-output transport, repair validation, and
-  `gflow shorts plan`; the underlying Flow automation remains based on upstream version `1.1.1`.
+- **Workspace changes:** the current milestones add a strict 10×10 manifest, bounded Gemini story
+  and media transports, resumable artifact checkpoints, and `gflow shorts plan`/`generate`; the
+  underlying Flow browser automation remains based on upstream version `1.1.1`.
 - **Verification on 13 September 2026:** the full automated suite, TypeScript build, and ESLint pass.
   `npm audit --omit=dev` reports no production vulnerabilities. The development dependency tree
   reports eight advisories (two moderate, five high, one critical), primarily through the old
-  Vitest/Vite toolchain, and must be upgraded before feature development.
+  Vitest/Vite toolchain; review those development-only advisories before release.
 - **Known limitations:** Flow browser automation is unofficial and can break when the Flow UI
   changes. Authentication, CAPTCHA, quota, and account changes remain manual; the tool must not
   bypass service limits. Public TikTok and YouTube publishing requires approved API applications,

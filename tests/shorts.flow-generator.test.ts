@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { GoogleFlowSceneGenerator } from "../src/shorts/flow-generator.js";
 import type { FlowAutomation, FlowJobResult } from "../src/flow/types.js";
+import type { ScenePlan } from "../src/shorts/schema.js";
 import { validCreativePlan } from "./fixtures/shorts.js";
 
 const flowResult: FlowJobResult = {
@@ -74,7 +75,7 @@ describe("GoogleFlowSceneGenerator", () => {
       startFrame: "/tmp/attacker.png",
       outDir: "/tmp/attacker",
       outputs: 8
-    } as typeof validCreativePlan extends () => infer P ? P extends { episodes: Array<infer E> } ? E extends { scenes: Array<infer S> } ? S : never : never : never;
+    } as ScenePlan;
 
     await new GoogleFlowSceneGenerator(automation).generate({
       episodeIndex: 1,
