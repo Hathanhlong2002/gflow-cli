@@ -4,6 +4,10 @@ dist/
 coverage/
 .gflow/
 gflow-output/
-docs/
+docs/*
+!docs/superpowers/
+docs/superpowers/*
+!docs/superpowers/specs/
+!docs/superpowers/plans/
 *.log
 .DS_Store
