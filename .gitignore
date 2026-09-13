@@ -11,3 +11,4 @@ docs/superpowers/*
 !docs/superpowers/plans/
 *.log
 .DS_Store
+.worktrees/
