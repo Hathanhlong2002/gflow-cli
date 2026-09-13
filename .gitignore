@@ -4,6 +4,9 @@ dist/
 coverage/
 .gflow/
 gflow-output/
+.env
+.env.*
+!.env.example
 docs/*
 !docs/superpowers/
 docs/superpowers/*
