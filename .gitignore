@@ -9,6 +9,7 @@ docs/*
 docs/superpowers/*
 !docs/superpowers/specs/
 !docs/superpowers/plans/
+!docs/shorts-run-guide.md
 *.log
 .DS_Store
 .worktrees/

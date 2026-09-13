@@ -427,7 +427,10 @@ then generate a vertical opening image, narration WAV, and one Google Flow clip 
 the Gemini key through the environment and plan the series:
 
 ```bash
-export GEMINI_API_KEY="set-this-in-your-shell-secret-manager"
+printf 'Gemini API key: '
+read -s GEMINI_API_KEY
+printf '\n'
+export GEMINI_API_KEY
 npm run dev -- shorts plan \
   --topic "Đại dương kỳ bí" \
   --out ./shorts-output/ocean
@@ -455,6 +458,9 @@ accepted as command-line arguments or written to project files. This milestone c
 clips but does not yet render finished episodes with FFmpeg or publish to TikTok/YouTube. See the
 [approved design](docs/superpowers/specs/2026-09-13-flow-shorts-factory-design.md) for the full
 pipeline and safety constraints.
+
+For step-by-step setup, login, generation, and resume instructions, see the
+[Vietnamese run guide](docs/shorts-run-guide.md).
 
 ## Disclaimer
 
