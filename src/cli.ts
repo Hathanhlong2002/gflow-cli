@@ -15,8 +15,9 @@ import { ToolPage } from "./flow/tools.js";
 import { parseAgentInstruction, parseAgentRun, parseAgentSettings, parseBatchYaml, parseCharacter, parseEditMedia, parseExtendScene, parseImageJob, parseTool, parseVideoJob } from "./jobs/schema.js";
 import { runJobs } from "./jobs/runner.js";
 import { resolveOutputDir } from "./config/paths.js";
+import { registerShortsCommands, type ShortsCommandDependencies } from "./shorts/commands.js";
 
-export interface CreateProgramOptions {
+export interface CreateProgramOptions extends ShortsCommandDependencies {
   automation?: FlowAutomation;
   characterAutomation?: CharacterAutomation;
   toolAutomation?: ToolAutomation;
@@ -608,6 +609,8 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       await owned.close();
     }
   });
+
+  registerShortsCommands(program, options);
 
   const media = program.command("media").description("Inspect project media assets.");
   withSessionOptions(media.command("list").description("List all images and videos in the project with their unique IDs.")).action(async (command) => {

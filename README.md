@@ -420,6 +420,25 @@ npm test
 
 CI (lint + build + test on Node 20 & 22) runs on every push and pull request.
 
+## Flow Shorts Factory: creative planning
+
+The first milestone turns one topic into a validated creative manifest with exactly ten episodes
+and ten 8-second scenes per episode. Set the Gemini key through the environment, then run:
+
+```bash
+export GEMINI_API_KEY="set-this-in-your-shell-secret-manager"
+npm run dev -- shorts plan \
+  --topic "Đại dương kỳ bí" \
+  --out ./shorts-output/ocean
+```
+
+The command writes `project.json` and `creative-plan.json` beneath the selected output directory.
+It does not yet generate images or videos, spend Google Flow credits, render final media, or
+publish to TikTok/YouTube. The API key is never accepted as a command-line option or written to
+the project files. See the
+[approved design](docs/superpowers/specs/2026-09-13-flow-shorts-factory-design.md) for the full
+pipeline and safety constraints.
+
 ## Disclaimer
 
 `gflow` is an **unofficial** tool and is not affiliated with, endorsed by, or sponsored by Google.
@@ -435,9 +454,10 @@ CAPTCHAs, rotate accounts, strip watermarks, or evade rate limits.
   turn a topic into ten approximately 80-second vertical videos using Gemini for story and scene
   planning, Google Flow for image/video generation, FFmpeg for assembly, and the official TikTok
   and YouTube APIs for publishing.
-- **Workspace changes:** no implementation changes yet; this checkout currently matches upstream
-  version `1.1.1`.
-- **Verification on 13 September 2026:** all 82 tests, the TypeScript build, and ESLint pass.
+- **Workspace changes:** the creative-planning milestone adds a strict 10×10 manifest, atomic local
+  project state, a bounded Gemini structured-output transport, repair validation, and
+  `gflow shorts plan`; the underlying Flow automation remains based on upstream version `1.1.1`.
+- **Verification on 13 September 2026:** the full automated suite, TypeScript build, and ESLint pass.
   `npm audit --omit=dev` reports no production vulnerabilities. The development dependency tree
   reports eight advisories (two moderate, five high, one critical), primarily through the old
   Vitest/Vite toolchain, and must be upgraded before feature development.
