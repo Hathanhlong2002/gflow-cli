@@ -24,21 +24,13 @@ describe("generateShortsProject", () => {
 
   it("checkpoints all scene media and serializes Flow jobs", async () => {
     const harness = await createHarness();
-    let imageCalls = 0;
     let speechCalls = 0;
     let flowCalls = 0;
-    let imageActive = 0;
-    let maxImageActive = 0;
     let flowActive = 0;
     let maxFlowActive = 0;
     const gemini: GeminiMediaTransport = {
       async generateImage() {
-        imageCalls += 1;
-        imageActive += 1;
-        maxImageActive = Math.max(maxImageActive, imageActive);
-        await new Promise((resolve) => setTimeout(resolve, 1));
-        imageActive -= 1;
-        return { mimeType: "image/jpeg", bytes: JPEG };
+        throw new Error("Shorts generation must not request Gemini images");
       },
       async generateSpeech() { speechCalls += 1; return { sampleRate: 24000, channels: 1, bitsPerSample: 16, pcm: WAV_PCM }; }
     };
@@ -58,8 +50,8 @@ describe("generateShortsProject", () => {
 
     expect(result.status).toBe("GENERATED");
     expect(result.scenes).toHaveLength(100);
-    expect(result.scenes.every((scene) => scene.status === "COMPLETED" && scene.image && scene.narration && scene.video)).toBe(true);
-    expect([imageCalls, speechCalls, flowCalls, maxImageActive, maxFlowActive]).toEqual([100, 100, 100, 2, 1]);
+    expect(result.scenes.every((scene) => scene.status === "COMPLETED" && !scene.image && scene.narration && scene.video)).toBe(true);
+    expect([speechCalls, flowCalls, maxFlowActive]).toEqual([100, 100, 1]);
     const clip = await readFile(join(harness.root, "episodes/01/scenes/01/clip.mp4"));
     expect(createHash("sha256").update(clip).digest("hex")).toBe(result.scenes[0].video?.sha256);
   });
@@ -87,11 +79,10 @@ describe("generateShortsProject", () => {
 
   it("resumes after quota without repeating checkpointed images or narration", async () => {
     const harness = await createHarness();
-    let imageCalls = 0;
     let speechCalls = 0;
     let flowCalls = 0;
     const gemini: GeminiMediaTransport = {
-      async generateImage() { imageCalls += 1; return { mimeType: "image/jpeg", bytes: JPEG }; },
+      async generateImage() { throw new Error("Shorts generation must not request Gemini images"); },
       async generateSpeech() { speechCalls += 1; return { sampleRate: 24000, channels: 1, bitsPerSample: 16, pcm: WAV_PCM }; }
     };
     const sceneGenerator: SceneGenerator = {
@@ -106,7 +97,7 @@ describe("generateShortsProject", () => {
     const resumed = await generateShortsProject({ ...harness, gemini, sceneGenerator, resume: true });
 
     expect(resumed.status).toBe("GENERATED");
-    expect([imageCalls, speechCalls, flowCalls]).toEqual([100, 100, 101]);
+    expect([speechCalls, flowCalls]).toEqual([100, 101]);
     await expect(readFile(join(harness.root, "action-required.json"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
@@ -144,24 +135,6 @@ describe("generateShortsProject", () => {
       gemini: completeGemini(),
       sceneGenerator: { async generate(input) { return writeFlowArtifact(input.outDir, input.episodeIndex, input.sceneIndex); } }
     })).rejects.toThrow(/checksum/i);
-  });
-
-  it("checkpoints the affected scene as failed when Gemini returns an invalid image", async () => {
-    const harness = await createHarness();
-    const gemini: GeminiMediaTransport = {
-      async generateImage() { return { mimeType: "image/jpeg", bytes: new Uint8Array([1, 2, 3]) }; },
-      async generateSpeech() { return { sampleRate: 24000, channels: 1, bitsPerSample: 16, pcm: WAV_PCM }; }
-    };
-
-    await expect(generateShortsProject({
-      ...harness,
-      gemini,
-      sceneGenerator: { async generate(input) { return writeFlowArtifact(input.outDir, input.episodeIndex, input.sceneIndex); } }
-    })).rejects.toThrow(/signature/i);
-
-    const failedScenes = (await harness.journalStore.load()).scenes.filter((scene) => scene.status === "FAILED");
-    expect(failedScenes).toHaveLength(1);
-    expect(failedScenes[0]).toMatchObject({ id: "ep-01-scene-01", error: { code: "GENERATION_FAILED" } });
   });
 
   async function createHarness() {

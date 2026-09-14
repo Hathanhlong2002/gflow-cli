@@ -11,7 +11,7 @@ import {
 } from "../errors.js";
 import { artifactRecordSchema, type ArtifactRecord, type GenerationJournal, type SceneGenerationRecord, type GenerationJournalStore } from "./generation-journal.js";
 import type { GeminiMediaTransport } from "./gemini-transport.js";
-import { writeNarration, writeSceneImage } from "./media-artifacts.js";
+import { writeNarration } from "./media-artifacts.js";
 import type { ProjectState } from "./project-store.js";
 import { SHORTS_EPISODE_COUNT, SHORTS_SCENE_COUNT, type CreativePlan } from "./schema.js";
 import type { SceneGenerator } from "./flow-generator.js";
@@ -167,26 +167,6 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
-async function mapBounded<T>(items: T[], concurrency: number, worker: (item: T) => Promise<void>): Promise<void> {
-  let next = 0;
-  let failed = false;
-  let firstError: unknown;
-  const runners = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-    while (!failed) {
-      const index = next++;
-      if (index >= items.length) return;
-      try {
-        await worker(items[index]);
-      } catch (error) {
-        if (!failed) firstError = error;
-        failed = true;
-      }
-    }
-  });
-  await Promise.all(runners);
-  if (failed) throw firstError;
-}
-
 export async function generateShortsProject(input: GenerateShortsInput): Promise<GenerationJournal> {
   const root = resolve(input.root);
   if (input.project.stage !== "PLANNED" || !input.project.planHash) throw new Error("Shorts project must be PLANNED before generation");
@@ -214,39 +194,15 @@ export async function generateShortsProject(input: GenerateShortsInput): Promise
 
   try {
     await checkpoint();
-    const scenesWithoutImage: Array<{ episodeIndex: number; sceneIndex: number }> = [];
     for (let episodeIndex = 1; episodeIndex <= SHORTS_EPISODE_COUNT; episodeIndex += 1) {
       for (let sceneIndex = 1; sceneIndex <= SHORTS_SCENE_COUNT; sceneIndex += 1) {
         const record = sceneAt(journal, episodeIndex, sceneIndex);
         const paths = input.journalStore.pathsFor(episodeIndex, sceneIndex);
         if (record.image) await verifyArtifact(root, record.image, record.image.mimeType === "image/jpeg" ? paths.imageJpeg : paths.imagePng);
-        else scenesWithoutImage.push({ episodeIndex, sceneIndex });
         if (record.narration) await verifyArtifact(root, record.narration, paths.narration);
         if (record.video) await verifyArtifact(root, record.video, paths.video);
       }
     }
-
-    await mapBounded(scenesWithoutImage, 2, async ({ episodeIndex, sceneIndex }) => {
-      const record = sceneAt(journal, episodeIndex, sceneIndex);
-      try {
-        const paths = input.journalStore.pathsFor(episodeIndex, sceneIndex);
-        const planScene = input.plan.episodes[episodeIndex - 1].scenes[sceneIndex - 1];
-        const continuity = input.plan.continuity;
-        const media = await input.gemini.generateImage({
-          model: input.project.models.image,
-          aspectRatio: "9:16",
-          prompt: `Create a vertical opening frame. Series: ${input.plan.seriesTitle}. Visual: ${planScene.visual}. Continuity: ${continuity.characters.join("; ")}; ${continuity.palette}; ${continuity.cameraLanguage}. Keep consistent with: ${continuity.prohibitedChanges.join("; ")}.`
-        });
-        const path = media.mimeType === "image/jpeg" ? paths.imageJpeg : paths.imagePng;
-        const artifact = await writeSceneImage({ root, path, media });
-        record.image = artifact;
-        record.error = undefined;
-        await checkpoint();
-      } catch (error) {
-        activeScene ??= record;
-        throw error;
-      }
-    });
 
     for (let episodeIndex = 1; episodeIndex <= SHORTS_EPISODE_COUNT; episodeIndex += 1) {
       for (let sceneIndex = 1; sceneIndex <= SHORTS_SCENE_COUNT; sceneIndex += 1) {
@@ -273,13 +229,11 @@ export async function generateShortsProject(input: GenerateShortsInput): Promise
         activeScene = record;
         const paths = input.journalStore.pathsFor(episodeIndex, sceneIndex);
         const planScene = input.plan.episodes[episodeIndex - 1].scenes[sceneIndex - 1];
-        const imagePath = record.image?.mimeType === "image/jpeg" ? paths.imageJpeg : paths.imagePng;
-        if (!record.image || !record.narration) throw new Error(`Scene ${record.id} is missing required media`);
+        if (!record.narration) throw new Error(`Scene ${record.id} is missing narration`);
         const generated = await input.sceneGenerator.generate({
           episodeIndex,
           sceneIndex,
           scene: planScene,
-          imagePath,
           outDir: flowOutDir
         });
         const bytes = await readGeneratedVideo(root, flowOutDir, generated.path);
@@ -321,10 +275,10 @@ export async function generateShortsProject(input: GenerateShortsInput): Promise
 async function verifyRecordedArtifacts(input: GenerateShortsInput, journal: GenerationJournal): Promise<void> {
   for (const scene of journal.scenes) {
     const paths = input.journalStore.pathsFor(scene.episodeIndex, scene.sceneIndex);
-    if (scene.status !== "COMPLETED" || !scene.image || !scene.narration || !scene.video) {
+    if (scene.status !== "COMPLETED" || !scene.narration || !scene.video) {
       throw new Error(`Generated scene ${scene.id} has missing artifacts or an incomplete status`);
     }
-    await verifyArtifact(input.root, scene.image, scene.image.mimeType === "image/jpeg" ? paths.imageJpeg : paths.imagePng);
+    if (scene.image) await verifyArtifact(input.root, scene.image, scene.image.mimeType === "image/jpeg" ? paths.imageJpeg : paths.imagePng);
     await verifyArtifact(input.root, scene.narration, paths.narration);
     await verifyArtifact(input.root, scene.video, paths.video);
   }

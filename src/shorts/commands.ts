@@ -15,7 +15,7 @@ import { parseCreativePlan } from "./schema.js";
 import { SHORTS_EPISODE_COUNT, SHORTS_SCENE_COUNT } from "./schema.js";
 
 const DEFAULT_LANGUAGE = "vi-VN";
-const DEFAULT_TEXT_MODEL = "gemini-2.5-flash";
+const DEFAULT_TEXT_MODEL = "gemini-3.5-flash";
 const DEFAULT_IMAGE_MODEL = "gemini-2.5-flash-image";
 const DEFAULT_TTS_MODEL = "gemini-2.5-flash-preview-tts";
 

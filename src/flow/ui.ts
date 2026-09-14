@@ -131,7 +131,7 @@ export async function dismissOpenLayers(page: Page): Promise<void> {
   }
 }
 
-export const FLOW_BASE = "https://labs.google/fx/tools/flow";
+export const FLOW_BASE = "https://flow.google.com";
 export type ProjectSub = "" | "characters" | "tools" | "create-tool";
 
 export function projectIdFromUrl(url: string): string | undefined {

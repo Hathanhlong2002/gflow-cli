@@ -9,13 +9,13 @@ import {
   RateLimitedError
 } from "../errors.js";
 import { artifactBasename, writeArtifactMetadata } from "../output/artifacts.js";
-import { downloadResult, type DownloadQuality } from "./download.js";
+import { downloadCurrentFlowVideo, downloadResult, type DownloadQuality } from "./download.js";
 import type { GFlowJob } from "../jobs/schema.js";
 import type { FlowAutomation, FlowAutomationRunInput, FlowJobResult } from "./types.js";
 import { flowLocators } from "./locators.js";
 import { dismissOpenLayers, pickOption, pickModel, confirmPicker, navigateToProject } from "./ui.js";
 
-export const FLOW_URL = "https://labs.google/fx/tools/flow";
+export const FLOW_URL = "https://flow.google.com/";
 
 // Flow's aspect-ratio buttons render a Material icon ligature prefix; this maps the visible
 // ratio label to that ligature so we can target the right popover button.
@@ -83,27 +83,52 @@ export class FlowPage implements FlowAutomation {
       await this.referenceCharacter(name);
     }
 
+    const currentFlowVideoEditor = input.job.type === "video" && (await this.page.locator(".ProseMirror[contenteditable='true']").count()) > 0;
+    if (currentFlowVideoEditor && input.job.outputs !== 1) {
+      throw new GenerationFailedError("The current Flow editor supports one video output per job.");
+    }
+    const beforeCurrentFlowVideos = currentFlowVideoEditor
+      ? await this.page.locator('img[alt="Generated video thumbnail"]').count()
+      : 0;
     const before = new Set(await this.resultSrcs(input.job.type));
     await this.fillPrompt(input.job.prompt);
     await this.submit();
 
     const generationTimeoutSeconds = input.job.timeout ?? (input.job.type === "video" ? 1800 : 900);
-    const newSrcs = await this.waitForResults(before, input.job.outputs, generationTimeoutSeconds * 1000, input.job.type);
-
     const context = this.page.context();
     const quality: DownloadQuality = input.job.upscale ?? "original";
-    const artifacts = [];
-    for (let index = 0; index < Math.min(input.job.outputs, newSrcs.length); index += 1) {
-      const basename = artifactBasename(input.job.id, index + 1);
-      const { assetPath } = await downloadResult({
+    const downloaded: Array<{ basename: string; assetPath: string }> = [];
+
+    if (currentFlowVideoEditor) {
+      await this.waitForCurrentFlowVideo(beforeCurrentFlowVideos, generationTimeoutSeconds * 1000);
+      const basename = artifactBasename(input.job.id, 1);
+      const { assetPath } = await downloadCurrentFlowVideo({
         page: this.page,
-        context,
-        src: newSrcs[index],
-        type: input.job.type,
+        type: "video",
         quality,
         outDir: input.outDir,
         basename
       });
+      downloaded.push({ basename, assetPath });
+    } else {
+      const newSrcs = await this.waitForResults(before, input.job.outputs, generationTimeoutSeconds * 1000, input.job.type);
+      for (let index = 0; index < Math.min(input.job.outputs, newSrcs.length); index += 1) {
+        const basename = artifactBasename(input.job.id, index + 1);
+        const { assetPath } = await downloadResult({
+          page: this.page,
+          context,
+          src: newSrcs[index],
+          type: input.job.type,
+          quality,
+          outDir: input.outDir,
+          basename
+        });
+        downloaded.push({ basename, assetPath });
+      }
+    }
+
+    const artifacts = [];
+    for (const { basename, assetPath } of downloaded) {
       const metadataPath = join(input.outDir, `${basename}.json`);
       await writeArtifactMetadata(metadataPath, {
         jobId: input.job.id,
@@ -294,6 +319,34 @@ export class FlowPage implements FlowAutomation {
       await dismissOpenLayers(this.page);
       await submit.click();
     });
+  }
+
+  private async waitForCurrentFlowVideo(before: number, timeoutMs: number): Promise<void> {
+    const locators = flowLocators(this.page);
+    const thumbnails = this.page.locator('img[alt="Generated video thumbnail"]');
+    const downloadButton = this.page.getByRole("button", { name: "Download media" }).first();
+    const deadline = Date.now() + timeoutMs;
+
+    while (Date.now() < deadline) {
+      if (await locators.rateLimitMarker.first().isVisible().catch(() => false)) {
+        throw new RateLimitedError("Flow displayed a rate limit or unusual activity message.");
+      }
+      if (await locators.creditMarker.first().isVisible().catch(() => false)) {
+        throw new CreditLimitError("Flow displayed a credit or quota message.");
+      }
+      if (await locators.blockedMarker.first().isVisible().catch(() => false)) {
+        throw new GenerationBlockedError("Flow displayed a policy block message.");
+      }
+      if (await locators.failedMarker.first().isVisible().catch(() => false)) {
+        throw new GenerationFailedError("Flow displayed a generation failed message.");
+      }
+
+      const added = (await thumbnails.count()) - before;
+      if (added > 0 && await downloadButton.isVisible().catch(() => false)) return;
+      await this.page.waitForTimeout(1500);
+    }
+
+    throw new GenerationFailedError("Timed out waiting for a video in the Flow editor.");
   }
 
   private async waitForResults(before: Set<string>, expected: number, timeoutMs: number, type: "image" | "video"): Promise<string[]> {

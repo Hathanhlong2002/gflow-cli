@@ -8,13 +8,13 @@ describe("CharacterPage", () => {
     const page = await browser.newPage();
 
     try {
-      await page.route("**/fx/tools/flow/project/abc", async (route) => {
+      await page.route("https://flow.google.com/project/abc", async (route) => {
         await route.fulfill({
           contentType: "text/html",
           body: `
             <button>accessibility_new Characters</button>
             <div role="button">
-              <a href="/fx/tools/flow/project/abc/character/char-1">
+              <a href="/project/abc/character/char-1">
                 <span>accessibility_new</span>
                 <img alt="Untitled Character" src="https://example.test/thumb.png">
               </a>
@@ -23,7 +23,7 @@ describe("CharacterPage", () => {
           `
         });
       });
-      await page.route("**/fx/tools/flow/project/abc/characters", async (route) => {
+      await page.route("https://flow.google.com/project/abc/characters", async (route) => {
         await route.fulfill({
           contentType: "text/html",
           body: `
@@ -33,7 +33,7 @@ describe("CharacterPage", () => {
         });
       });
 
-      await page.goto("https://labs.google/fx/tools/flow/project/abc");
+      await page.goto("https://flow.google.com/project/abc");
       const characters = await new CharacterPage(page).listCharacters();
 
       expect(characters).toEqual([

@@ -12,6 +12,24 @@ function inlineResponse(mimeType: string, bytes: Uint8Array, data = Buffer.from(
 }
 
 describe("Gemini media transport", () => {
+  it("retries a rate-limited request using Retry-After before returning media", async () => {
+    let attempts = 0;
+    const fetcher: FetchLike = async () => {
+      attempts += 1;
+      if (attempts === 1) return new Response(null, { status: 429, headers: { "retry-after": "0" } });
+      return inlineResponse("audio/L16;codec=pcm;rate=24000", PCM_BYTES);
+    };
+    const transport = new GoogleGeminiTransport({ apiKey: "secret", fetcher });
+
+    await expect(transport.generateSpeech({ model: "gemini-tts", text: "Lời kể", voice: "Kore" })).resolves.toEqual({
+      sampleRate: 24000,
+      channels: 1,
+      bitsPerSample: 16,
+      pcm: PCM_BYTES
+    });
+    expect(attempts).toBe(2);
+  });
+
   it("requests a 9:16 image and returns decoded inline bytes", async () => {
     const fetcher = vi.fn<Parameters<FetchLike>, ReturnType<FetchLike>>(async () => inlineResponse("image/jpeg", JPEG_BYTES));
     const transport = new GoogleGeminiTransport({ apiKey: "secret", fetcher });

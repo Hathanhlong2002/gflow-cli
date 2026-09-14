@@ -7,11 +7,11 @@ import { validCreativePlan } from "./fixtures/shorts.js";
 const flowResult: FlowJobResult = {
   jobId: "ep-02-scene-03",
   artifacts: [{ path: "/tmp/flow/clip.mp4", metadataPath: "/tmp/flow/clip.json" }],
-  flowUrl: "https://labs.google/fx/tools/flow"
+  flowUrl: "https://flow.google.com"
 };
 
 describe("GoogleFlowSceneGenerator", () => {
-  it("maps a planned scene to one 8-second vertical Flow job", async () => {
+  it("maps a planned scene to one prompt-only 8-second vertical Flow job", async () => {
     let received: Parameters<FlowAutomation["runJob"]>[0] | undefined;
     const automation: FlowAutomation = {
       async runJob(input) {
@@ -25,7 +25,6 @@ describe("GoogleFlowSceneGenerator", () => {
       episodeIndex: 2,
       sceneIndex: 3,
       scene,
-      imagePath: "/project/episodes/02/scenes/03/start.jpg",
       outDir: "/project/flow-output"
     });
 
@@ -37,7 +36,6 @@ describe("GoogleFlowSceneGenerator", () => {
         ratio: "9:16",
         duration: 8,
         outputs: 1,
-        startFrame: "/project/episodes/02/scenes/03/start.jpg",
         out: "./gflow-output",
         ingredients: [],
         character: []
@@ -56,7 +54,6 @@ describe("GoogleFlowSceneGenerator", () => {
         episodeIndex: 1,
         sceneIndex: 1,
         scene: validCreativePlan().episodes[0].scenes[0],
-        imagePath: "/project/start.jpg",
         outDir: "/project/out"
       })).rejects.toThrow(/exactly one/i);
   });
@@ -81,11 +78,11 @@ describe("GoogleFlowSceneGenerator", () => {
       episodeIndex: 1,
       sceneIndex: 1,
       scene: untrustedScene,
-      imagePath: "/project/fixed/start.png",
       outDir: "/project/fixed-out"
     });
 
-    expect(received?.job).toMatchObject({ outputs: 1, startFrame: "/project/fixed/start.png", ratio: "9:16", duration: 8 });
+    expect(received?.job).toMatchObject({ outputs: 1, ratio: "9:16", duration: 8 });
+    expect(received?.job).not.toHaveProperty("startFrame");
     expect(received?.outDir).toBe("/project/fixed-out");
   });
 
@@ -98,7 +95,6 @@ describe("GoogleFlowSceneGenerator", () => {
       episodeIndex: 1,
       sceneIndex: 1,
       scene: validCreativePlan().episodes[0].scenes[0],
-      imagePath: "/project/start.jpg",
       outDir: "/project/out"
     })).rejects.toBe(failure);
   });

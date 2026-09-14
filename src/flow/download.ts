@@ -38,6 +38,36 @@ export interface DownloadOutput {
   assetPath: string;
 }
 
+export interface CurrentFlowVideoDownloadInput {
+  page: Page;
+  type: "video";
+  quality: DownloadQuality;
+  outDir: string;
+  basename: string;
+}
+
+// The current Flow editor renders video as a project scene rather than a <video> URL.
+// Its Download media button opens a quality menu, so save through that first-party UI.
+export async function downloadCurrentFlowVideo(input: CurrentFlowVideoDownloadInput): Promise<DownloadOutput> {
+  await mkdir(input.outDir, { recursive: true });
+  const button = input.page.getByRole("button", { name: "Download media" }).first();
+  await button.waitFor({ state: "visible", timeout: 15000 });
+  await button.click();
+
+  const pattern = qualityMenuPattern(input.quality);
+  const option = input.page.getByText(pattern).first();
+  await option.waitFor({ state: "visible", timeout: 10000 });
+  if (input.quality !== "original" && /upgrade/i.test(await option.innerText())) {
+    throw new ManualActionRequiredError("That download tier requires a Flow plan upgrade. Use original size or omit --upscale.");
+  }
+
+  const [download] = await Promise.all([
+    input.page.waitForEvent("download", { timeout: 180000 }),
+    option.click()
+  ]);
+  return saveDownload(input, download);
+}
+
 // Download a generated result at the requested quality. Prefer Flow's viewer Download
 // menu (full native asset / upscales); fall back to fetching the inline src so the
 // offline fixture and any future UI change still produce a file.
@@ -131,7 +161,7 @@ async function downloadViaMenu(input: DownloadInput): Promise<DownloadOutput | u
   return saveDownload(input, download);
 }
 
-async function saveDownload(input: DownloadInput, download: Download): Promise<DownloadOutput> {
+async function saveDownload(input: Pick<DownloadInput, "outDir" | "basename" | "type">, download: Download): Promise<DownloadOutput> {
   const ext = extname(download.suggestedFilename()) || (input.type === "video" ? ".mp4" : ".png");
   const assetPath = join(input.outDir, `${input.basename}${ext}`);
   await download.saveAs(assetPath);

@@ -38,7 +38,7 @@ describe("shorts CLI", () => {
     expect(planner.plan).toHaveBeenCalledWith({
       topic: validCreativePlan().topic,
       language: "vi-VN",
-      model: "gemini-2.5-flash"
+      model: "gemini-3.5-flash"
     });
     const state = JSON.parse(await readFile(join(outputDir, "project.json"), "utf8"));
     const plan = JSON.parse(await readFile(join(outputDir, "creative-plan.json"), "utf8"));

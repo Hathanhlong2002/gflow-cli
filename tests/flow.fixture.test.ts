@@ -10,12 +10,12 @@ const projectFixture = (label: string) => `<!doctype html>
 <html lang="en">
   <body>
     <main>
-      <div data-project="${label}" role="textbox" contenteditable="true"></div>
-      <button id="create" disabled>arrow_forwardCreate</button>
+      <div data-project="${label}" class="ProseMirror" contenteditable="true"></div>
+      <button id="create" aria-label="Start generation" disabled>arrow_forward</button>
       <section id="results"></section>
     </main>
     <script>
-      const prompt = document.querySelector('[role="textbox"]');
+      const prompt = document.querySelector('.ProseMirror[contenteditable="true"]');
       const create = document.getElementById("create");
       prompt.addEventListener("input", () => { create.disabled = prompt.textContent.trim().length === 0; });
       create.addEventListener("click", () => {
@@ -40,6 +40,45 @@ const projectFixture = (label: string) => `<!doctype html>
           });
         });
         document.getElementById("results").appendChild(img);
+      });
+    </script>
+  </body>
+</html>`;
+
+const currentFlowVideoFixture = `<!doctype html>
+<html lang="en">
+  <body>
+    <main>
+      <div class="ProseMirror" contenteditable="true"></div>
+      <button id="create" aria-label="Start generation" disabled>arrow_forward</button>
+      <section id="results"></section>
+      <div role="dialog" hidden>
+        <button id="download" aria-label="Download media">download</button>
+        <div role="menu" hidden><div role="menuitem" id="original">Original size</div></div>
+      </div>
+    </main>
+    <script>
+      const prompt = document.querySelector('.ProseMirror[contenteditable="true"]');
+      const create = document.getElementById("create");
+      const dialog = document.querySelector('[role="dialog"]');
+      const menu = document.querySelector('[role="menu"]');
+      prompt.addEventListener("input", () => { create.disabled = prompt.textContent.trim().length === 0; });
+      create.addEventListener("click", () => {
+        const thumbnail = document.createElement("img");
+        thumbnail.alt = "Generated video thumbnail";
+        thumbnail.src = "data:image/png;base64,iVBORw0KGgo=";
+        document.getElementById("results").appendChild(thumbnail);
+        dialog.hidden = false;
+      });
+      document.getElementById("download").addEventListener("click", () => { menu.hidden = false; });
+      document.getElementById("original").addEventListener("click", () => {
+        const bytes = new Uint8Array([0, 0, 0, 20, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d, 0, 0, 0, 0, 0x69, 0x73, 0x6f, 0x6d]);
+        const blob = new Blob([bytes], { type: "video/mp4" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = "flow-clip.mp4";
+        document.body.appendChild(a);
+        a.click();
       });
     </script>
   </body>
@@ -126,6 +165,42 @@ describe("FlowPage fixture", () => {
     }
   });
 
+  it("detects and downloads a video from the current Flow editor", async () => {
+    const profileDir = await mkdtemp(join(tmpdir(), "gflow-profile-"));
+    const outDir = await mkdtemp(join(tmpdir(), "gflow-output-"));
+    const context = await chromium.launchPersistentContext(profileDir, { headless: true, acceptDownloads: true });
+
+    try {
+      const page = context.pages()[0] ?? (await context.newPage());
+      await page.setContent(currentFlowVideoFixture);
+
+      const result = await new FlowPage(page).runJob({
+        job: {
+          id: "current-flow-clip",
+          type: "video",
+          prompt: "A small boat crossing calm ocean water",
+          ratio: "9:16",
+          duration: 8,
+          outputs: 1,
+          timeout: 1,
+          out: outDir,
+          ingredients: [],
+          character: []
+        },
+        outDir
+      });
+
+      expect(result.artifacts).toHaveLength(1);
+      const saved = result.artifacts[0]!.path;
+      expect(saved).toContain("current-flow-clip-001.mp4");
+      const bytes = await readFile(saved);
+      expect(bytes.subarray(4, 8).toString()).toBe("ftyp");
+      expect(result.artifacts[0]!.metadataPath).toContain("current-flow-clip-001.json");
+    } finally {
+      await context.close();
+    }
+  });
+
   it("navigates to the requested project before generating", async () => {
     const profileDir = await mkdtemp(join(tmpdir(), "gflow-profile-"));
     const outDir = await mkdtemp(join(tmpdir(), "gflow-output-"));
@@ -134,19 +209,19 @@ describe("FlowPage fixture", () => {
     try {
       const page = context.pages()[0] ?? (await context.newPage());
       const targetProjectId = "00000000-0000-4000-8000-000000000000";
-      await page.route("https://labs.google/fx/tools/flow", async (route) => {
+      await page.route("https://flow.google.com", async (route) => {
         await route.fulfill({
           contentType: "text/html",
-          body: `<a href="/fx/tools/flow/project/${targetProjectId}"><span>Target Project</span></a>`
+          body: `<a href="/project/${targetProjectId}"><span>Target Project</span></a>`
         });
       });
-      await page.route(`https://labs.google/fx/tools/flow/project/${targetProjectId}`, async (route) => {
+      await page.route(`https://flow.google.com/project/${targetProjectId}`, async (route) => {
         await route.fulfill({ contentType: "text/html", body: projectFixture("target") });
       });
-      await page.route("https://labs.google/fx/tools/flow/project/wrong", async (route) => {
+      await page.route("https://flow.google.com/project/wrong", async (route) => {
         await route.fulfill({ contentType: "text/html", body: projectFixture("wrong") });
       });
-      await page.goto("https://labs.google/fx/tools/flow/project/wrong");
+      await page.goto("https://flow.google.com/project/wrong");
 
       const flow = new FlowPage(page);
       const result = await flow.runJob({

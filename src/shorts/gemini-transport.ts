@@ -8,6 +8,7 @@ const MAX_IMAGE_RESPONSE_BYTES = 28_500_000;
 const MAX_AUDIO_RESPONSE_BYTES = 12 * 1024 * 1024;
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 const MAX_AUDIO_BYTES = 8 * 1024 * 1024;
+const RETRY_DELAYS_MS = [15_000, 30_000, 60_000] as const;
 
 const geminiEnvelopeSchema = z
   .object({
@@ -128,6 +129,26 @@ function decodeBase64(data: string, maximumBytes: number): Uint8Array {
   return new Uint8Array(decoded);
 }
 
+function retryDelayMs(response: Response, retryIndex: number): number {
+  const retryAfter = response.headers.get("retry-after");
+  if (retryAfter !== null) {
+    const seconds = Number(retryAfter);
+    if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+    const date = Date.parse(retryAfter);
+    if (Number.isFinite(date)) return Math.max(0, date - Date.now());
+  }
+  return RETRY_DELAYS_MS[retryIndex] ?? RETRY_DELAYS_MS[RETRY_DELAYS_MS.length - 1];
+}
+
+function isRetryableStatus(status: number): boolean {
+  return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+
+async function wait(milliseconds: number): Promise<void> {
+  if (milliseconds <= 0) return;
+  await new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+}
+
 export class GoogleGeminiTransport implements GeminiTransport, GeminiMediaTransport {
   private readonly apiKey: string;
   private readonly endpointBase: URL;
@@ -151,26 +172,33 @@ export class GoogleGeminiTransport implements GeminiTransport, GeminiMediaTransp
     }
     const endpoint = new URL(`models/${model}:generateContent`, this.endpointBase);
 
-    let response: Response;
-    try {
-      response = await this.fetcher(endpoint, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-goog-api-key": this.apiKey
-        },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(this.timeoutMs)
-      });
-    } catch {
-      throw new GeminiTransportError("Gemini request failed", "REQUEST_FAILED");
-    }
+    let response: Response | undefined;
+    for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt += 1) {
+      try {
+        response = await this.fetcher(endpoint, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-goog-api-key": this.apiKey
+          },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(this.timeoutMs)
+        });
+      } catch {
+        throw new GeminiTransportError("Gemini request failed", "REQUEST_FAILED");
+      }
 
-    if (!response.ok) {
+      if (response.ok) break;
+      const status = response.status;
+      const delay = retryDelayMs(response, attempt);
       await response.body?.cancel().catch(() => undefined);
-      throw new GeminiTransportError(`Gemini request failed with HTTP ${response.status}`, "HTTP_ERROR", response.status);
+      if (!isRetryableStatus(status) || attempt === RETRY_DELAYS_MS.length) {
+        throw new GeminiTransportError(`Gemini request failed with HTTP ${status}`, "HTTP_ERROR", status);
+      }
+      await wait(delay);
     }
 
+    if (!response?.ok) throw new GeminiTransportError("Gemini request failed", "REQUEST_FAILED");
     const responseText = await readLimitedBody(response, maximumBytes);
     try {
       return geminiEnvelopeSchema.parse(JSON.parse(responseText) as unknown);

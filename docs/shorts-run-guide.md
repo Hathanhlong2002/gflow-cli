@@ -64,7 +64,7 @@ Tool tạo:
 - `shorts-output/ocean/project.json`
 - `shorts-output/ocean/creative-plan.json`
 
-Kế hoạch gồm 10 tập, mỗi tập 10 cảnh, mỗi cảnh 8 giây. Có thể đổi ngôn ngữ hoặc model bằng `--language`, `--text-model`, `--image-model`, `--tts-model`; model phải được Gemini hỗ trợ và key của bạn phải có quyền truy cập.
+Kế hoạch gồm 10 tập, mỗi tập 10 cảnh, mỗi cảnh 8 giây. Có thể đổi ngôn ngữ hoặc model bằng `--language`, `--text-model`, `--tts-model`; model phải được Gemini hỗ trợ và key của bạn phải có quyền truy cập. `--image-model` không được dùng trong chế độ tạo video chỉ bằng prompt.
 
 ## 4. Đăng nhập Google Flow
 
@@ -86,7 +86,7 @@ node --env-file=.env --import tsx src/index.ts shorts generate \
 
 Nếu dùng cách nhập key ẩn thay vì file `.env`, thay phần đầu lệnh bằng `npm run dev --`.
 
-Lệnh này gọi Gemini để tạo 100 ảnh và 100 đoạn lời thoại, rồi chạy Google Flow tuần tự để tạo 100 clip 8 giây. Đây là thao tác có thể tiêu tốn đáng kể quota/credits; hãy kiểm tra tài khoản trước khi chạy. Hiện chưa có chế độ dry-run cho bước tạo này.
+Lệnh này gọi Gemini để tạo 100 đoạn lời thoại, rồi gửi prompt từng cảnh trực tiếp cho Google Flow tạo 100 clip 8 giây ở chế độ text-to-video; không tạo hoặc tải ảnh khung hình đầu vào. Đây là thao tác có thể tiêu tốn đáng kể quota/credits; hãy kiểm tra tài khoản trước khi chạy. Hiện chưa có chế độ dry-run cho bước tạo này.
 
 Các file được lưu theo cảnh, ví dụ:
 
@@ -95,7 +95,6 @@ shorts-output/ocean/
 ├── generation.json
 ├── episodes/
 │   └── 01/scenes/01/
-│       ├── start.jpg     # có thể là start.png
 │       ├── narration.wav
 │       └── clip.mp4
 └── flow-output/          # file trung gian do Flow tải về
@@ -130,7 +129,7 @@ Không dùng `--resume` cho lần chạy đầu. Nếu đã có `generation.json
 
 ## 8. Xử lý lỗi Gemini HTTP 404
 
-HTTP 404 là `NOT_FOUND`, không đủ thông tin để kết luận key sai. API key không hợp lệ thường được Gemini trả về HTTP 400; model mặc định `gemini-2.5-flash` hiện được tài liệu Google liệt kê là model ổn định. Kiểm tra model mà chính key của bạn nhìn thấy bằng request chỉ in status và tên model, không in key hay response lỗi:
+HTTP 404 là `NOT_FOUND`, không đủ thông tin để kết luận key sai. API key không hợp lệ thường được Gemini trả về HTTP 400. Model mặc định là `gemini-3.5-flash`; nếu tài khoản chưa được cấp quyền model này, kiểm tra model mà chính key của bạn nhìn thấy bằng request chỉ in status và tên model, không in key hay response lỗi:
 
 ```bash
 node --env-file=.env --input-type=module -e '
@@ -149,7 +148,7 @@ console.log(models
 '
 ```
 
-Nếu `gemini-2.5-flash` không xuất hiện, dùng một ID có `generateContent` trong danh sách với `--text-model`. Nếu endpoint danh sách cũng lỗi, kiểm tra lại tên/format của `.env`, quyền của key trong Google AI Studio và trạng thái Gemini API. Xem thêm tài liệu Google về [danh sách model](https://ai.google.dev/api/models) và [mã lỗi API](https://ai.google.dev/gemini-api/docs/generate-content/api-errors).
+Nếu `gemini-3.5-flash` không xuất hiện, dùng một ID có `generateContent` trong danh sách với `--text-model`. Nếu endpoint danh sách cũng lỗi, kiểm tra lại tên/format của `.env`, quyền của key trong Google AI Studio và trạng thái Gemini API. Xem thêm tài liệu Google về [danh sách model](https://ai.google.dev/api/models) và [mã lỗi API](https://ai.google.dev/gemini-api/docs/generate-content/api-errors).
 
 ## 9. Trợ giúp CLI
 

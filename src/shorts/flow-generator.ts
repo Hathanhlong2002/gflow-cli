@@ -6,7 +6,6 @@ export interface GenerateSceneInput {
   episodeIndex: number;
   sceneIndex: number;
   scene: ScenePlan;
-  imagePath: string;
   outDir: string;
 }
 
@@ -27,8 +26,7 @@ export class GoogleFlowSceneGenerator implements SceneGenerator {
       prompt: `${input.scene.visual}\n${input.scene.motionPrompt}`,
       ratio: "9:16",
       duration: 8,
-      outputs: 1,
-      startFrame: input.imagePath
+      outputs: 1
     });
 
     const result = await this.automation.runJob({ job, outDir: input.outDir });

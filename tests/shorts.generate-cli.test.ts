@@ -45,7 +45,7 @@ describe("shorts generate CLI", () => {
 
     const journal = JSON.parse(await readFile(join(project.root, "generation.json"), "utf8"));
     expect(journal).toMatchObject({ status: "GENERATED", scenes: Array.from({ length: 100 }, () => ({ status: "COMPLETED" })) });
-    expect([imageCalls, speechCalls, flowCalls]).toEqual([100, 100, 100]);
+    expect([imageCalls, speechCalls, flowCalls]).toEqual([0, 100, 100]);
   });
 
   it("requires a Gemini key only when no media adapter is injected", async () => {
