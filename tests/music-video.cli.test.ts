@@ -25,6 +25,21 @@ describe("music-video CLI", () => {
     expect(musicVideo?.commands.find((command) => command.name() === "run")).toBeDefined();
   });
 
+  it("documents the workflow, provenance, and caption limitation", async () => {
+    const readme = await readFile(resolve("README.md"), "utf8");
+    for (const requiredText of [
+      "gflow music-video run",
+      "GEMINI_API_KEY",
+      "--resume",
+      "lyria-3.5",
+      "SynthID",
+      "1920x1080",
+      "approximate"
+    ]) {
+      expect(readme).toContain(requiredText);
+    }
+  });
+
   it("uses Vietnamese three-minute defaults and prints the final output", async () => {
     const root = await newRoot();
     const runner = vi.fn(async (input: RunMusicVideoInput) => ({

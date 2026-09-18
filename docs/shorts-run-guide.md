@@ -2,6 +2,47 @@
 
 Hướng dẫn này chạy bản CLI trong repository. Tool tạo kế hoạch bằng Gemini, sau đó tạo ảnh mở đầu, lời thoại WAV và clip Google Flow cho từng cảnh.
 
+## Tạo video ca nhạc 16:9 từ một chủ đề
+
+Luồng `music-video` độc lập với luồng 10 video dọc bên dưới. Nó nhận một chủ đề, viết lời và tạo
+bài hát có giọng hát bằng Google AI, tạo storyboard theo thời lượng thật, dùng tối đa 8 clip Flow
+cho các cảnh chính, tạo chuyển động từ ảnh cho các cảnh còn lại, rồi xuất một video 1920x1080.
+
+Chuẩn bị `GEMINI_API_KEY`, `ffmpeg`, `ffprobe`, Chrome và tài khoản có quyền dùng Flow. Đăng nhập
+một lần, sau đó chạy mẫu ba phút tiếng Việt:
+
+```bash
+npm run dev -- auth login --profile music
+node --env-file=.env --import tsx src/index.ts music-video run \
+  --topic "Tình yêu" \
+  --out ./music-video-output/tinh-yeu \
+  --profile music
+```
+
+Kết quả chính nằm ở `music-video-output/tinh-yeu/output/final.mp4`. Thư mục dự án cũng giữ
+`song-plan.json`, `storyboard.json`, bài hát MP3, lời, ảnh, clip, phụ đề, journal và báo cáo media.
+Không sửa các file checkpoint khi lệnh đang chạy.
+
+Nếu tool dừng do đăng nhập, xác minh thủ công, rate limit hoặc hết credit, đọc
+`action-required.json`, tự giải quyết nguyên nhân rồi chạy đúng cấu hình cũ với `--resume`:
+
+```bash
+node --env-file=.env --import tsx src/index.ts music-video run \
+  --topic "Tình yêu" \
+  --out ./music-video-output/tinh-yeu \
+  --profile music \
+  --resume
+```
+
+Model mặc định là `gemini-3.5-flash`, `gemini-2.5-flash-image` và `lyria-3.5`; thời lượng mặc
+định là 180 giây. Có thể đổi bằng `--text-model`, `--image-model`, `--music-model` và
+`--duration` (30–240 giây), nếu API key thật sự có quyền với model đó.
+
+Phụ đề chỉ có timing approximate theo từng đoạn khi provider không trả timestamp từng từ. FFmpeg
+sẽ burn ASS nếu bản cài có filter tương ứng; nếu không, video có subtitle track tiếng Việt có thể
+bật/tắt. Không xóa watermark hoặc SynthID của nhà cung cấp. Một lần chạy thật có thể tiêu tốn quota
+Gemini/Lyria và tối đa 8 lượt tạo video Flow; tool không tự đổi tài khoản hoặc vượt giới hạn.
+
 ## 1. Chuẩn bị
 
 - Node.js 20 trở lên.
