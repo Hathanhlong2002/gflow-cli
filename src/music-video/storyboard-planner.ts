@@ -158,9 +158,15 @@ function createStoryboard(
   return parseStoryboard({
     schemaVersion: 1,
     durationSeconds,
-    entries: joined.map(({ suggestedMode: _suggestedMode, ...entry }) => ({
-      ...entry,
-      mode: flowIds.has(entry.id) ? "flow-video" : "animated-image"
+    entries: joined.map((entry) => ({
+      id: entry.id,
+      startSeconds: entry.startSeconds,
+      endSeconds: entry.endSeconds,
+      mode: flowIds.has(entry.id) ? "flow-video" : "animated-image",
+      sectionId: entry.sectionId,
+      visual: entry.visual,
+      motionPrompt: entry.motionPrompt,
+      importance: entry.importance
     }))
   }, durationSeconds);
 }
