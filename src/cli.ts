@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { Command, CommanderError, InvalidArgumentError } from "commander";
 import { BROWSER_CHANNELS, DEFAULT_BROWSER_CHANNEL, launchLoginChrome, openBrowserSession, type BrowserChannel } from "./browser/session.js";
 import { exitCodeForError, messageForError } from "./errors.js";
+import { registerMusicVideoCommands, type MusicVideoCommandDependencies } from "./music-video/commands.js";
 import { FlowPage, FLOW_URL } from "./flow/page.js";
 import type { AgentAutomation, CharacterAutomation, EditAutomation, FlowAutomation, SceneAutomation, ToolAutomation } from "./flow/types.js";
 import { AgentPage } from "./flow/agent.js";
@@ -17,7 +18,7 @@ import { runJobs } from "./jobs/runner.js";
 import { resolveOutputDir } from "./config/paths.js";
 import { registerShortsCommands, type ShortsCommandDependencies } from "./shorts/commands.js";
 
-export interface CreateProgramOptions extends ShortsCommandDependencies {
+export interface CreateProgramOptions extends ShortsCommandDependencies, MusicVideoCommandDependencies {
   automation?: FlowAutomation;
   characterAutomation?: CharacterAutomation;
   toolAutomation?: ToolAutomation;
@@ -611,6 +612,14 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
   });
 
   registerShortsCommands(program, {
+    ...options,
+    flowAutomationFactory: options.flowAutomationFactory ?? (async ({ profile, headed, browser }) =>
+      options.automation
+        ? { automation: options.automation, close: async () => undefined }
+        : realAutomation(profile, headed, browser))
+  });
+
+  registerMusicVideoCommands(program, {
     ...options,
     flowAutomationFactory: options.flowAutomationFactory ?? (async ({ profile, headed, browser }) =>
       options.automation
