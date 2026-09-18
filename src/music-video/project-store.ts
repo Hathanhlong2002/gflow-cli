@@ -9,9 +9,16 @@ import {
   musicVideoProjectStateSchema,
   musicVideoStageSchema,
   musicVideoTopicSchema,
+  musicVideoJournalSchema,
+  parseMusicVideoJournal,
   parseMusicVideoProjectState,
+  parseSongPlan,
+  parseStoryboard,
   type MusicVideoArtifact,
-  type MusicVideoProjectState
+  type MusicVideoJournal,
+  type MusicVideoProjectState,
+  type SongPlan,
+  type Storyboard
 } from "./schema.js";
 
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
@@ -124,10 +131,10 @@ function hasImageSignature(media: BinaryMedia): boolean {
   return media.bytes.length >= png.length && png.every((byte, index) => media.bytes[index] === byte);
 }
 
-function redact(message: string): string {
+export function redactSensitiveText(message: string): string {
   return message
     .replace(/AIza[0-9A-Za-z_-]{20,}/g, "[REDACTED]")
-    .replace(/\b(?:api[_-]?key|authorization|token|secret)\s*[:=]\s*\S+/gi, "$1=[REDACTED]");
+    .replace(/\b(api[_-]?key|authorization|token|secret)\s*[:=]\s*\S+/gi, "$1=[REDACTED]");
 }
 
 export class MusicVideoProjectStore {
@@ -195,9 +202,43 @@ export class MusicVideoProjectStore {
     return parseMusicVideoProjectState(JSON.parse(await readFile(this.projectPaths.state, "utf8")) as unknown);
   }
 
-  async saveState(value: MusicVideoProjectState): Promise<void> {
+  async saveState(value: MusicVideoProjectState): Promise<MusicVideoProjectState> {
     const state = musicVideoProjectStateSchema.parse({ ...value, updatedAt: new Date().toISOString() });
     await atomicWrite(this.projectPaths.state, `${JSON.stringify(state, null, 2)}\n`);
+    return state;
+  }
+
+  async savePlan(value: SongPlan): Promise<{ plan: SongPlan; sha256: string }> {
+    const plan = parseSongPlan(value);
+    const content = `${JSON.stringify(plan, null, 2)}\n`;
+    await atomicWrite(this.projectPaths.plan, content);
+    return { plan, sha256: createHash("sha256").update(content).digest("hex") };
+  }
+
+  async loadPlan(): Promise<SongPlan> {
+    return parseSongPlan(JSON.parse(await readFile(this.projectPaths.plan, "utf8")) as unknown);
+  }
+
+  async saveStoryboard(value: Storyboard): Promise<{ storyboard: Storyboard; sha256: string }> {
+    const storyboard = parseStoryboard(value, value.durationSeconds);
+    const content = `${JSON.stringify(storyboard, null, 2)}\n`;
+    await atomicWrite(this.projectPaths.storyboard, content);
+    return { storyboard, sha256: createHash("sha256").update(content).digest("hex") };
+  }
+
+  async loadStoryboard(): Promise<Storyboard> {
+    const value = JSON.parse(await readFile(this.projectPaths.storyboard, "utf8")) as unknown;
+    return parseStoryboard(value);
+  }
+
+  async saveJournal(value: MusicVideoJournal): Promise<MusicVideoJournal> {
+    const journal = musicVideoJournalSchema.parse({ ...value, updatedAt: new Date().toISOString() });
+    await atomicWrite(this.projectPaths.journal, `${JSON.stringify(journal, null, 2)}\n`);
+    return journal;
+  }
+
+  async loadJournal(): Promise<MusicVideoJournal> {
+    return parseMusicVideoJournal(JSON.parse(await readFile(this.projectPaths.journal, "utf8")) as unknown);
   }
 
   async writeSong(song: GeneratedSong): Promise<MusicVideoArtifact> {
@@ -221,6 +262,56 @@ export class MusicVideoProjectStore {
     return this.recordArtifact(path, media.mimeType);
   }
 
+  async writeVideo(entryId: string, sourcePath: string): Promise<MusicVideoArtifact> {
+    const target = this.assetPaths(entryId).video;
+    const bytes = await readFile(resolve(sourcePath));
+    const hasFtyp = bytes.byteLength >= 12 && String.fromCharCode(...bytes.slice(4, 8)) === "ftyp";
+    if (!hasFtyp || bytes.byteLength > 500 * 1024 * 1024) throw new Error("Flow clip does not have a valid MP4 signature or size");
+    await atomicWrite(target, bytes);
+    return this.recordArtifact(target, "video/mp4");
+  }
+
+  async writeCaptions(content: string): Promise<MusicVideoArtifact> {
+    const captions = z.string().min(1).max(4 * 1024 * 1024).parse(content);
+    await atomicWrite(this.projectPaths.captions, captions);
+    return this.recordArtifact(this.projectPaths.captions, "text/x-ass");
+  }
+
+  async writeLyriaResponse(value: { outputText: string; structureText?: string }): Promise<MusicVideoArtifact> {
+    const response = z.object({
+      outputText: z.string().min(1).max(2 * 1024 * 1024),
+      structureText: z.string().max(2 * 1024 * 1024).optional()
+    }).strict().parse(value);
+    await atomicWrite(this.projectPaths.lyriaResponse, `${JSON.stringify(response, null, 2)}\n`);
+    return this.recordArtifact(this.projectPaths.lyriaResponse, "application/json");
+  }
+
+  async writeActionRequired(value: { code: string; message: string; resumeCommand: string }): Promise<void> {
+    const action = z.object({
+      code: z.string().regex(/^[A-Z0-9_]+$/),
+      message: z.string().min(1).max(1000),
+      resumeCommand: z.string().min(1).max(500)
+    }).strict().parse(value);
+    await atomicWrite(this.projectPaths.actionRequired, `${JSON.stringify({
+      ...action,
+      message: redactSensitiveText(action.message),
+      createdAt: new Date().toISOString()
+    }, null, 2)}\n`);
+  }
+
+  async clearActionRequired(): Promise<void> {
+    await unlink(this.projectPaths.actionRequired).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== "ENOENT") throw error;
+    });
+  }
+
+  resolveArtifactPath(artifact: MusicVideoArtifact): string {
+    const parsed = musicVideoArtifactSchema.parse(artifact);
+    const path = resolve(this.root, parsed.path);
+    safeRelativePath(this.root, path);
+    return path;
+  }
+
   async recordArtifact(path: string, mimeType: MusicVideoArtifact["mimeType"]): Promise<MusicVideoArtifact> {
     const relativePath = safeRelativePath(this.root, path);
     const bytes = await readFile(resolve(path));
@@ -234,8 +325,7 @@ export class MusicVideoProjectStore {
 
   async artifactMatchesDisk(artifact: MusicVideoArtifact): Promise<boolean> {
     const parsed = musicVideoArtifactSchema.parse(artifact);
-    const path = resolve(this.root, parsed.path);
-    safeRelativePath(this.root, path);
+    const path = this.resolveArtifactPath(parsed);
     try {
       const file = await readFile(path);
       return file.byteLength === parsed.bytes && createHash("sha256").update(file).digest("hex") === parsed.sha256;
@@ -247,7 +337,7 @@ export class MusicVideoProjectStore {
 
   async appendEvent(input: { stage: MusicVideoProjectState["stage"]; code?: string; message: string }): Promise<void> {
     const event = eventInputSchema.parse(input);
-    const line = `${JSON.stringify({ ...event, message: redact(event.message), timestamp: new Date().toISOString() })}\n`;
+    const line = `${JSON.stringify({ ...event, message: redactSensitiveText(event.message), timestamp: new Date().toISOString() })}\n`;
     await mkdir(dirname(this.projectPaths.events), { recursive: true, mode: 0o700 });
     await appendFile(this.projectPaths.events, line, { encoding: "utf8", mode: 0o600 });
   }
