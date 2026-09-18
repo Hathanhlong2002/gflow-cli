@@ -9,6 +9,7 @@ export interface SongPlanInput {
   language: string;
   model: string;
   targetDurationSeconds: number;
+  signal?: AbortSignal;
 }
 
 export interface SongPlanner {
@@ -124,7 +125,8 @@ export class GeminiSongPlanner implements SongPlanner {
           "Return only fields defined by the schema."
         ].join(" "),
         prompt: attempt === 1 ? basePrompt : `${basePrompt}\nCorrect the structure. Validation issues: ${issues}`,
-        responseSchema: MUSIC_PLAN_RESPONSE_SCHEMA
+        responseSchema: MUSIC_PLAN_RESPONSE_SCHEMA,
+        signal: input.signal
       };
       const candidate = await this.transport.generateJson(request);
       try {

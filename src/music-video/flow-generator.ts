@@ -7,6 +7,7 @@ export interface GenerateVisualClipInput {
   entry: StoryboardEntry;
   startFramePath: string;
   outDir: string;
+  signal?: AbortSignal;
 }
 
 export interface VisualClipGenerator {
@@ -17,6 +18,7 @@ export class MusicVideoFlowGenerator implements VisualClipGenerator {
   constructor(private readonly automation: FlowAutomation) {}
 
   async generate(input: GenerateVisualClipInput): Promise<FlowArtifact> {
+    input.signal?.throwIfAborted();
     const entry = storyboardEntrySchema.parse(input.entry);
     if (entry.mode !== "flow-video") throw new Error(`${entry.id} is not selected for Flow video generation`);
     const startFrame = z.string().trim().min(1).parse(input.startFramePath);
@@ -31,6 +33,7 @@ export class MusicVideoFlowGenerator implements VisualClipGenerator {
       outputs: 1
     });
     const result = await this.automation.runJob({ job, outDir });
+    input.signal?.throwIfAborted();
     if (result.artifacts.length !== 1) {
       throw new Error(`Flow must return exactly one video artifact for ${entry.id}`);
     }

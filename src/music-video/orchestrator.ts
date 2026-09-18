@@ -32,7 +32,7 @@ export interface RunMusicVideoInput {
   storyboardPlanner: StoryboardPlanner;
   imageGenerator: GeminiMediaTransport;
   flowGeneratorFactory: () => Promise<{ generator: VisualClipGenerator; close(): Promise<void> }>;
-  probeMedia(path: string): Promise<MusicMediaProbe>;
+  probeMedia(path: string, signal?: AbortSignal): Promise<MusicMediaProbe>;
   renderer(input: RenderMusicVideoInput): Promise<MusicVideoRenderResult>;
   resumeCommand?: string;
   signal?: AbortSignal;
@@ -111,6 +111,27 @@ function imagePathFor(store: MusicVideoProjectStore, artifact: MusicVideoArtifac
   return store.resolveArtifactPath(artifact);
 }
 
+function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  signal.throwIfAborted();
+  return new Promise<T>((resolvePromise, rejectPromise) => {
+    const abort = () => rejectPromise(signal.reason instanceof Error
+      ? signal.reason
+      : new DOMException("Operation aborted", "AbortError"));
+    signal.addEventListener("abort", abort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", abort);
+        resolvePromise(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", abort);
+        rejectPromise(error);
+      }
+    );
+  });
+}
+
 export async function runMusicVideo(input: RunMusicVideoInput): Promise<MusicVideoRunResult> {
   let state: MusicVideoProjectState;
   try {
@@ -142,12 +163,14 @@ export async function runMusicVideo(input: RunMusicVideoInput): Promise<MusicVid
     if (state.planHash) {
       plan = await input.store.loadPlan(state.planHash);
     } else {
-      plan = await input.songPlanner.plan({
+      plan = await abortable(input.songPlanner.plan({
         topic: state.topic,
         language: state.language,
         model: state.models.text,
-        targetDurationSeconds: state.targetDurationSeconds
-      });
+        targetDurationSeconds: state.targetDurationSeconds,
+        signal: input.signal
+      }), input.signal);
+      input.signal?.throwIfAborted();
       const saved = await input.store.savePlan(plan);
       state = await updateStage(input.store, state, "SONG_PLANNED", "Song plan validated and saved", { planHash: saved.sha256 });
     }
@@ -162,14 +185,15 @@ export async function runMusicVideo(input: RunMusicVideoInput): Promise<MusicVid
       if (songArtifact.sha256 !== state.songHash) throw new Error("Recorded song hash does not match audio/song.mp3");
       song = await loadSavedSong(input.store);
     } else {
-      song = await input.musicGenerator.generate({ model: state.models.music, plan });
+      song = await abortable(input.musicGenerator.generate({ model: state.models.music, plan, signal: input.signal }), input.signal);
+      input.signal?.throwIfAborted();
       reconcileLyrics(plan, song.outputText);
       songArtifact = await input.store.writeSong(song);
       await input.store.writeLyriaResponse({ outputText: song.outputText, ...(song.structureText ? { structureText: song.structureText } : {}) });
       state = await updateStage(input.store, state, "SONG_READY", "Generated song validated and saved", { songHash: songArtifact.sha256 });
     }
 
-    const songProbe = await input.probeMedia(input.store.paths().song);
+    const songProbe = await abortable(input.probeMedia(input.store.paths().song, input.signal), input.signal);
     if (!songProbe.hasAudio || !Number.isFinite(songProbe.duration) || songProbe.duration < 30 || songProbe.duration > 240) {
       throw new Error("Generated song does not contain a valid 30-240 second audio stream");
     }
@@ -178,7 +202,13 @@ export async function runMusicVideo(input: RunMusicVideoInput): Promise<MusicVid
     if (state.storyboardHash) {
       storyboard = await input.store.loadStoryboard(state.storyboardHash, songProbe.duration);
     } else {
-      storyboard = await input.storyboardPlanner.plan({ plan, durationSeconds: songProbe.duration, model: state.models.text });
+      storyboard = await abortable(input.storyboardPlanner.plan({
+        plan,
+        durationSeconds: songProbe.duration,
+        model: state.models.text,
+        signal: input.signal
+      }), input.signal);
+      input.signal?.throwIfAborted();
       const saved = await input.store.saveStoryboard(storyboard);
       state = await updateStage(input.store, state, "STORYBOARDED", "Visual storyboard validated and saved", { storyboardHash: saved.sha256 });
     }
@@ -204,13 +234,15 @@ export async function runMusicVideo(input: RunMusicVideoInput): Promise<MusicVid
       const record = journal.entries.find((candidate) => candidate.id === entry.id);
       if (!record) throw new Error(`Generation journal is missing ${entry.id}`);
       if (!record.image || !(await input.store.artifactMatchesDisk(record.image))) {
-        const media = await input.imageGenerator.generateImage({
+        const media = await abortable(input.imageGenerator.generateImage({
           model: state.models.image,
           prompt: [entry.visual, entry.motionPrompt, `Continuity: ${JSON.stringify(plan.continuity)}`].join("\n"),
-          aspectRatio: "16:9"
-        });
+          aspectRatio: "16:9",
+          signal: input.signal
+        }), input.signal);
+        input.signal?.throwIfAborted();
         const image = await input.store.writeImage(entry.id, media);
-        const imageProbe = await input.probeMedia(input.store.resolveArtifactPath(image));
+        const imageProbe = await abortable(input.probeMedia(input.store.resolveArtifactPath(image), input.signal), input.signal);
         if (!imageProbe.hasVideo || !imageProbe.width || !imageProbe.height) {
           throw new Error(`Generated image for ${entry.id} is not decodable media`);
         }
@@ -232,12 +264,14 @@ export async function runMusicVideo(input: RunMusicVideoInput): Promise<MusicVid
         }
         ownedFlow ??= await input.flowGeneratorFactory();
         const imagePath = imagePathFor(input.store, record.image!);
-        const generated = await ownedFlow.generator.generate({
+        const generated = await abortable(ownedFlow.generator.generate({
           entry,
           startFramePath: imagePath,
-          outDir: input.store.assetPaths(entry.id).directory
-        });
-        const clipProbe = await input.probeMedia(generated.path);
+          outDir: input.store.assetPaths(entry.id).directory,
+          signal: input.signal
+        }), input.signal);
+        input.signal?.throwIfAborted();
+        const clipProbe = await abortable(input.probeMedia(generated.path, input.signal), input.signal);
         if (!clipProbe.hasVideo) throw new Error(`Flow artifact for ${entry.id} has no video stream`);
         record.video = await input.store.writeVideo(entry.id, generated.path);
         record.status = "COMPLETED";
@@ -276,14 +310,16 @@ export async function runMusicVideo(input: RunMusicVideoInput): Promise<MusicVid
       imagePath: imagePathFor(input.store, record.image!),
       ...(record.video ? { videoPath: input.store.resolveArtifactPath(record.video) } : {})
     }]));
-    const rendered = await input.renderer({
+    const rendered = await abortable(input.renderer({
       storyboard,
       assets,
       songPath: input.store.paths().song,
       captionsPath: input.store.paths().captions,
       outputPath: input.store.paths().final,
-      reportPath: input.store.paths().mediaReport
-    });
+      reportPath: input.store.paths().mediaReport,
+      signal: input.signal
+    }), input.signal);
+    input.signal?.throwIfAborted();
     journal.final = await input.store.recordArtifact(rendered.outputPath, "video/mp4");
     journal.status = "READY";
     journal = await input.store.saveJournal(journal);

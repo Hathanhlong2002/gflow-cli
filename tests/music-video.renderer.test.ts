@@ -156,4 +156,27 @@ describe("hybrid music-video renderer", () => {
     await expect(access(outputPath)).rejects.toThrow();
     expect((await readdir(join(root, "output"))).some((name) => name.includes("timeout.mp4") && name.includes(".tmp"))).toBe(false);
   });
+
+  it("kills rendering and cleans temporary output when aborted", async () => {
+    const outputPath = join(root, "output", "aborted.mp4");
+    const controller = new AbortController();
+    const running = renderMusicVideo({
+      storyboard,
+      assets: {
+        "visual-001": { imagePath: imageOne },
+        "visual-002": { imagePath: imageOne, videoPath: flowClip },
+        "visual-003": { imagePath: imageTwo }
+      },
+      songPath: song,
+      captionsPath: captions,
+      outputPath,
+      reportPath: join(root, "output", "aborted-report.json"),
+      signal: controller.signal
+    });
+    setTimeout(() => controller.abort(), 20);
+
+    await expect(running).rejects.toMatchObject({ name: "AbortError" });
+    await expect(access(outputPath)).rejects.toThrow();
+    expect((await readdir(join(root, "output"))).some((name) => name.includes("aborted.mp4") && name.includes(".tmp"))).toBe(false);
+  });
 });

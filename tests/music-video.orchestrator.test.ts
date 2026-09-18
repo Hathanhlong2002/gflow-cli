@@ -171,4 +171,24 @@ describe("music-video orchestrator", () => {
     await expect(runMusicVideo(input)).rejects.toMatchObject({ name: "AbortError" });
     expect((await input.store.load()).stage).toBe("CANCELLED");
   });
+
+  it("cancels while a provider request is still pending", async () => {
+    const root = await newRoot();
+    const input = await dependencies(root, []);
+    const controller = new AbortController();
+    input.signal = controller.signal;
+    let notifyStarted!: () => void;
+    const started = new Promise<void>((resolvePromise) => { notifyStarted = resolvePromise; });
+    input.musicGenerator.generate = async () => {
+      notifyStarted();
+      return new Promise(() => undefined);
+    };
+
+    const running = runMusicVideo(input);
+    await started;
+    controller.abort();
+
+    await expect(running).rejects.toMatchObject({ name: "AbortError" });
+    expect((await input.store.load()).stage).toBe("CANCELLED");
+  });
 });

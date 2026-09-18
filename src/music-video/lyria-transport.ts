@@ -38,7 +38,7 @@ export interface GeneratedSong {
 }
 
 export interface MusicGenerator {
-  generate(input: { model: string; plan: SongPlan }): Promise<GeneratedSong>;
+  generate(input: { model: string; plan: SongPlan; signal?: AbortSignal }): Promise<GeneratedSong>;
 }
 
 export interface GoogleLyriaTransportOptions {
@@ -203,7 +203,7 @@ export class GoogleLyriaTransport implements MusicGenerator {
     this.retryDelaysMs = options.retryDelaysMs ?? RETRY_DELAYS_MS;
   }
 
-  async generate(input: { model: string; plan: SongPlan }): Promise<GeneratedSong> {
+  async generate(input: { model: string; plan: SongPlan; signal?: AbortSignal }): Promise<GeneratedSong> {
     const model = z.string().trim().min(1).max(200).regex(/^[a-zA-Z0-9._-]+$/, "invalid model name").parse(input.model);
     const requestBody = {
       model,
@@ -221,9 +221,12 @@ export class GoogleLyriaTransport implements MusicGenerator {
             "x-goog-api-key": this.apiKey
           },
           body: JSON.stringify(requestBody),
-          signal: AbortSignal.timeout(this.timeoutMs)
+          signal: input.signal
+            ? AbortSignal.any([input.signal, AbortSignal.timeout(this.timeoutMs)])
+            : AbortSignal.timeout(this.timeoutMs)
         });
       } catch (error) {
+        if (input.signal?.aborted) throw input.signal.reason;
         if (attempt === this.retryDelaysMs.length || (error instanceof Error && error.name === "AbortError")) {
           throw new LyriaTransportError("Lyria request failed", "REQUEST_FAILED");
         }

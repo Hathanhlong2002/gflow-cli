@@ -57,6 +57,7 @@ export interface RenderMusicVideoInput {
   targetHeight?: number;
   fps?: number;
   timeoutMs?: number;
+  signal?: AbortSignal;
 }
 
 export interface MusicVideoRenderResult {
@@ -77,10 +78,12 @@ export function parseMusicVideoMediaReport(value: unknown): MusicVideoRenderResu
 interface ProcessOptions {
   timeoutMs: number;
   cwd?: string;
+  signal?: AbortSignal;
 }
 
 function runProcess(command: string, args: string[], options: ProcessOptions): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolvePromise, rejectPromise) => {
+    options.signal?.throwIfAborted();
     const child = spawn(command, args, { shell: false, cwd: options.cwd });
     let stdout = "";
     let stderr = "";
@@ -90,6 +93,13 @@ function runProcess(command: string, args: string[], options: ProcessOptions): P
       settled = true;
       rejectPromise(error);
     };
+    const abort = () => {
+      child.kill("SIGKILL");
+      finishReject(options.signal?.reason instanceof Error
+        ? options.signal.reason
+        : new DOMException("Operation aborted", "AbortError"));
+    };
+    options.signal?.addEventListener("abort", abort, { once: true });
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
       finishReject(new RenderError(`${command} timed out after ${options.timeoutMs}ms`));
@@ -105,6 +115,7 @@ function runProcess(command: string, args: string[], options: ProcessOptions): P
     });
     child.on("close", (code) => {
       clearTimeout(timer);
+      options.signal?.removeEventListener("abort", abort);
       if (settled) return;
       settled = true;
       if (code !== 0) rejectPromise(new RenderError(`${command} exited with code ${code}: ${stderr.trim()}`));
@@ -113,7 +124,7 @@ function runProcess(command: string, args: string[], options: ProcessOptions): P
   });
 }
 
-export async function probeMusicMedia(filePath: string): Promise<MusicMediaProbe> {
+export async function probeMusicMedia(filePath: string, signal?: AbortSignal): Promise<MusicMediaProbe> {
   const path = resolve(filePath);
   try {
     await access(path);
@@ -125,7 +136,7 @@ export async function probeMusicMedia(filePath: string): Promise<MusicMediaProbe
     "-show_entries", "format=duration,size:stream=codec_type,codec_name,width,height,r_frame_rate,sample_aspect_ratio,sample_rate,channels",
     "-of", "json",
     path
-  ], { timeoutMs: 30_000 });
+  ], { timeoutMs: 30_000, signal });
 
   const rawSchema = z.object({
     format: z.object({ duration: z.string().optional(), size: z.string().optional() }).passthrough().optional(),
@@ -207,13 +218,14 @@ function fadeFilters(duration: number): string {
   return `fade=t=in:st=0:d=${fadeDuration.toFixed(3)},fade=t=out:st=${fadeOutStart.toFixed(3)}:d=${fadeDuration.toFixed(3)}`;
 }
 
-async function supportsFfmpegFilter(name: string): Promise<boolean> {
+async function supportsFfmpegFilter(name: string, signal?: AbortSignal): Promise<boolean> {
   const safeName = z.string().regex(/^[a-z0-9_]+$/).parse(name);
-  const { stdout } = await runProcess("ffmpeg", ["-hide_banner", "-filters"], { timeoutMs: 30_000 });
+  const { stdout } = await runProcess("ffmpeg", ["-hide_banner", "-filters"], { timeoutMs: 30_000, signal });
   return new RegExp(`^\\s*[TSC.]{3}\\s+${safeName}\\s+`, "m").test(stdout);
 }
 
 export async function renderMusicVideo(input: RenderMusicVideoInput): Promise<MusicVideoRenderResult> {
+  input.signal?.throwIfAborted();
   validateTimeline(input.storyboard);
   const width = z.number().int().min(320).max(7680).parse(input.targetWidth ?? 1920);
   const height = z.number().int().min(240).max(4320).parse(input.targetHeight ?? 1080);
@@ -263,7 +275,7 @@ export async function renderMusicVideo(input: RenderMusicVideoInput): Promise<Mu
   }
 
   const songInputIndex = input.storyboard.entries.length;
-  const canBurnCaptions = await supportsFfmpegFilter("ass");
+  const canBurnCaptions = await supportsFfmpegFilter("ass", input.signal);
   const captionMode = canBurnCaptions ? "burned" : "embedded";
   args.push("-i", songPath);
   filterParts.push(`${concatLabels.join("")}concat=n=${concatLabels.length}:v=1:a=0[concatv]`);
@@ -304,11 +316,11 @@ export async function renderMusicVideo(input: RenderMusicVideoInput): Promise<Mu
 
   let probe: MusicMediaProbe;
   try {
-    await runProcess("ffmpeg", args, { timeoutMs, cwd: dirname(captionsPath) });
-    probe = await probeMusicMedia(temporaryOutputPath);
+    await runProcess("ffmpeg", args, { timeoutMs, cwd: dirname(captionsPath), signal: input.signal });
+    probe = await probeMusicMedia(temporaryOutputPath, input.signal);
   } catch (error) {
     await unlink(temporaryOutputPath).catch(() => undefined);
-    if (error instanceof RenderError) throw error;
+    if (error instanceof RenderError || (error instanceof Error && error.name === "AbortError")) throw error;
     throw new RenderError(error instanceof Error ? error.message : "FFmpeg render failed");
   }
 
@@ -344,6 +356,7 @@ export async function renderMusicVideo(input: RenderMusicVideoInput): Promise<Mu
     })}`);
   }
 
+  input.signal?.throwIfAborted();
   await rename(temporaryOutputPath, outputPath);
 
   const bytes = await readFile(outputPath);
