@@ -7,6 +7,7 @@ export default defineConfig({
     // (Node 22 was timing out on the two-job fixture test), so raise it globally.
     // Fast unit tests are unaffected — this only changes the failure ceiling.
     testTimeout: 30000,
-    hookTimeout: 30000
+    hookTimeout: 30000,
+    exclude: ["**/node_modules/**", "**/dist/**", ".worktrees/**"]
   }
 });

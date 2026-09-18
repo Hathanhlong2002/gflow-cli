@@ -51,7 +51,7 @@ const currentFlowVideoFixture = `<!doctype html>
     <main>
       <div class="ProseMirror" contenteditable="true"></div>
       <button id="create" aria-label="Start generation" disabled>arrow_forward</button>
-      <section id="results"></section>
+      <section id="results"><img alt="Generated video thumbnail" src="data:image/png;base64,old"></section>
       <div role="dialog" hidden>
         <button id="download" aria-label="Download media">download</button>
         <div role="menu" hidden><div role="menuitem" id="original">Original size</div></div>
@@ -64,11 +64,17 @@ const currentFlowVideoFixture = `<!doctype html>
       const menu = document.querySelector('[role="menu"]');
       prompt.addEventListener("input", () => { create.disabled = prompt.textContent.trim().length === 0; });
       create.addEventListener("click", () => {
-        const thumbnail = document.createElement("img");
-        thumbnail.alt = "Generated video thumbnail";
-        thumbnail.src = "data:image/png;base64,iVBORw0KGgo=";
-        document.getElementById("results").appendChild(thumbnail);
-        dialog.hidden = false;
+        create.removeAttribute("aria-label");
+        create.textContent = "stop";
+        window.setTimeout(() => {
+          const thumbnail = document.createElement("img");
+          thumbnail.alt = "Generated video thumbnail";
+          thumbnail.src = "data:image/png;base64,iVBORw0KGgo=";
+          thumbnail.addEventListener("click", () => { dialog.hidden = false; });
+          document.getElementById("results").replaceChildren(thumbnail);
+          create.setAttribute("aria-label", "Start generation");
+          create.textContent = "arrow_forward";
+        }, 100);
       });
       document.getElementById("download").addEventListener("click", () => { menu.hidden = false; });
       document.getElementById("original").addEventListener("click", () => {
@@ -107,6 +113,50 @@ describe("FlowPage fixture", () => {
       // Downloaded through the viewer's Download menu (Original tier); the fixture encodes
       // the result identity in the bytes so we verify the right result reached disk.
       await expect(readFile(saved, "utf8")).resolves.toBe("fixture-gen-1:original");
+    } finally {
+      await context.close();
+    }
+  });
+
+  it("fills a multiline prompt without pressing Enter and submitting early", async () => {
+    const profileDir = await mkdtemp(join(tmpdir(), "gflow-profile-"));
+    const outDir = await mkdtemp(join(tmpdir(), "gflow-output-"));
+    const context = await chromium.launchPersistentContext(profileDir, { headless: true, acceptDownloads: true });
+
+    try {
+      const page = context.pages()[0] ?? (await context.newPage());
+      await page.goto(FIXTURE);
+      await page.evaluate(() => {
+        (window as typeof window & { prematureSubmitSignals: number }).prematureSubmitSignals = 0;
+        const prompt = document.querySelector('[role="textbox"][contenteditable="true"], .ProseMirror[contenteditable="true"]');
+        for (const eventName of ["keydown", "beforeinput", "input"]) {
+          prompt?.addEventListener(eventName, (event) => {
+            const keyboardEvent = event as KeyboardEvent;
+            const inputEvent = event as InputEvent;
+            if (
+              keyboardEvent.key === "Enter" || inputEvent.data === "\n" ||
+              inputEvent.inputType === "insertParagraph" || inputEvent.inputType === "insertLineBreak"
+            ) {
+              (window as typeof window & { prematureSubmitSignals: number }).prematureSubmitSignals += 1;
+            }
+          });
+        }
+      });
+
+      await new FlowPage(page).runJob({
+        job: {
+          id: "multiline-prompt",
+          type: "image",
+          prompt: "First visual line\nSecond motion line",
+          outputs: 1,
+          out: outDir,
+          ingredients: [],
+          character: []
+        },
+        outDir
+      });
+
+      await expect(page.evaluate(() => (window as typeof window & { prematureSubmitSignals: number }).prematureSubmitSignals)).resolves.toBe(0);
     } finally {
       await context.close();
     }
@@ -182,7 +232,7 @@ describe("FlowPage fixture", () => {
           ratio: "9:16",
           duration: 8,
           outputs: 1,
-          timeout: 1,
+          timeout: 3,
           out: outDir,
           ingredients: [],
           character: []
@@ -196,6 +246,39 @@ describe("FlowPage fixture", () => {
       const bytes = await readFile(saved);
       expect(bytes.subarray(4, 8).toString()).toBe("ftyp");
       expect(result.artifacts[0]!.metadataPath).toContain("current-flow-clip-001.json");
+    } finally {
+      await context.close();
+    }
+  });
+
+  it("does not treat a returned Start button as completion without a video thumbnail", async () => {
+    const profileDir = await mkdtemp(join(tmpdir(), "gflow-profile-"));
+    const outDir = await mkdtemp(join(tmpdir(), "gflow-output-"));
+    const context = await chromium.launchPersistentContext(profileDir, { headless: true, acceptDownloads: true });
+
+    try {
+      const page = context.pages()[0] ?? (await context.newPage());
+      await page.setDefaultTimeout(500);
+      await page.setContent(currentFlowVideoFixture.replace(
+        'document.getElementById("results").replaceChildren(thumbnail);',
+        'document.getElementById("results").replaceChildren();'
+      ));
+
+      await expect(new FlowPage(page).runJob({
+        job: {
+          id: "missing-current-flow-clip",
+          type: "video",
+          prompt: "A small boat crossing calm ocean water",
+          ratio: "9:16",
+          duration: 8,
+          outputs: 1,
+          timeout: 3,
+          out: outDir,
+          ingredients: [],
+          character: []
+        },
+        outDir
+      })).rejects.toThrow(/Timed out waiting for a video/i);
     } finally {
       await context.close();
     }

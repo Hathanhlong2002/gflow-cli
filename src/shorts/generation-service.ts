@@ -207,29 +207,13 @@ export async function generateShortsProject(input: GenerateShortsInput): Promise
     for (let episodeIndex = 1; episodeIndex <= SHORTS_EPISODE_COUNT; episodeIndex += 1) {
       for (let sceneIndex = 1; sceneIndex <= SHORTS_SCENE_COUNT; sceneIndex += 1) {
         const record = sceneAt(journal, episodeIndex, sceneIndex);
-        if (record.narration) continue;
-        activeScene = record;
-        const paths = input.journalStore.pathsFor(episodeIndex, sceneIndex);
-        const planScene = input.plan.episodes[episodeIndex - 1].scenes[sceneIndex - 1];
-        const audio = await input.gemini.generateSpeech({ model: input.project.models.tts, text: planScene.narration, voice: "Kore" });
-        record.narration = await writeNarration({ root, path: paths.narration, audio });
-        record.status = "MEDIA_READY";
-        record.error = undefined;
-        await checkpoint();
-      }
-    }
-
-    for (let episodeIndex = 1; episodeIndex <= SHORTS_EPISODE_COUNT; episodeIndex += 1) {
-      for (let sceneIndex = 1; sceneIndex <= SHORTS_SCENE_COUNT; sceneIndex += 1) {
-        const record = sceneAt(journal, episodeIndex, sceneIndex);
         if (record.video) {
-          record.status = "COMPLETED";
+          record.status = record.narration ? "COMPLETED" : "MEDIA_READY";
           continue;
         }
         activeScene = record;
         const paths = input.journalStore.pathsFor(episodeIndex, sceneIndex);
         const planScene = input.plan.episodes[episodeIndex - 1].scenes[sceneIndex - 1];
-        if (!record.narration) throw new Error(`Scene ${record.id} is missing narration`);
         const generated = await input.sceneGenerator.generate({
           episodeIndex,
           sceneIndex,
@@ -244,7 +228,25 @@ export async function generateShortsProject(input: GenerateShortsInput): Promise
           sha256: createHash("sha256").update(bytes).digest("hex"),
           mimeType: "video/mp4"
         });
-        record.status = "COMPLETED";
+        record.status = record.narration ? "COMPLETED" : "MEDIA_READY";
+        record.error = undefined;
+        await checkpoint();
+      }
+    }
+
+    for (let episodeIndex = 1; episodeIndex <= SHORTS_EPISODE_COUNT; episodeIndex += 1) {
+      for (let sceneIndex = 1; sceneIndex <= SHORTS_SCENE_COUNT; sceneIndex += 1) {
+        const record = sceneAt(journal, episodeIndex, sceneIndex);
+        if (record.narration) {
+          record.status = record.video ? "COMPLETED" : "MEDIA_READY";
+          continue;
+        }
+        activeScene = record;
+        const paths = input.journalStore.pathsFor(episodeIndex, sceneIndex);
+        const planScene = input.plan.episodes[episodeIndex - 1].scenes[sceneIndex - 1];
+        const audio = await input.gemini.generateSpeech({ model: input.project.models.tts, text: planScene.narration, voice: "Kore" });
+        record.narration = await writeNarration({ root, path: paths.narration, audio });
+        record.status = record.video ? "COMPLETED" : "MEDIA_READY";
         record.error = undefined;
         await checkpoint();
       }

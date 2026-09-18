@@ -18,7 +18,7 @@ describe("shorts generate CLI", () => {
   const roots: string[] = [];
   afterEach(async () => {
     vi.restoreAllMocks();
-    await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+    await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })));
   });
 
   it("loads a planned project and generates all scenes with injected adapters", async () => {

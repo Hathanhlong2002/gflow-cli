@@ -11,6 +11,7 @@ import { GoogleGeminiTransport, type GeminiMediaTransport } from "./gemini-trans
 import { planShortsProject } from "./plan-service.js";
 import { GeminiStoryPlanner, type StoryPlanner } from "./planner.js";
 import { ProjectStore, type ProjectState } from "./project-store.js";
+import { renderShortsProject } from "./renderer.js";
 import { parseCreativePlan } from "./schema.js";
 import { SHORTS_EPISODE_COUNT, SHORTS_SCENE_COUNT } from "./schema.js";
 
@@ -152,6 +153,30 @@ export function registerShortsCommands(program: Command, dependencies: ShortsCom
         throw error;
       } finally {
         await owned?.close();
+      }
+    });
+
+  shorts
+    .command("render")
+    .description("Merge and render downloaded Flow scene clips into finished episode videos with FFmpeg.")
+    .argument("<project-json>", "path to project.json")
+    .option("--episode <number>", "render only a specific episode (1-10)")
+    .option("--timeout <ms>", "FFmpeg timeout in milliseconds", "300000")
+    .action(async (projectJson: string, command: { episode?: string; timeout?: string }) => {
+      const statePath = resolve(process.cwd(), projectJson);
+      const root = dirname(statePath);
+      const episodeIndex = command.episode ? Number.parseInt(command.episode, 10) : undefined;
+      if (episodeIndex !== undefined && (Number.isNaN(episodeIndex) || episodeIndex < 1 || episodeIndex > SHORTS_EPISODE_COUNT)) {
+        throw new Error(`Episode must be between 1 and ${SHORTS_EPISODE_COUNT}`);
+      }
+      const timeoutMs = command.timeout ? Number.parseInt(command.timeout, 10) : undefined;
+      const result = await renderShortsProject({
+        projectRoot: root,
+        episodeIndex,
+        timeoutMs
+      });
+      for (const ep of result.episodes) {
+        console.log(`rendered episode ${ep.episodeIndex}: ${ep.outputPath} (${ep.duration.toFixed(1)}s, ${ep.sceneCount} scenes)`);
       }
     });
 }

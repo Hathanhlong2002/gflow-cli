@@ -299,11 +299,10 @@ export class FlowPage implements FlowAutomation {
       await dismissOpenLayers(this.page);
       await box.click({ timeout: 5000 }).catch(() => box.evaluate((el) => (el as HTMLElement).focus()));
     });
-    // Clear any existing text (sequential/batch jobs reuse the same prompt box) with real
-    // key events, then type so the contenteditable's framework registers the input.
-    await box.press("ControlOrMeta+a").catch(() => undefined);
-    await box.press("Backspace").catch(() => undefined);
-    await box.pressSequentially(prompt, { delay: 8 });
+    // Playwright's fill() updates a contenteditable through one input operation. Typing a
+    // multiline prompt sequentially turns each newline into an Enter key; Flow treats Enter
+    // as submit and starts generation before the remaining prompt has been entered.
+    await box.fill(prompt);
   }
 
   private async submit(): Promise<void> {
@@ -324,8 +323,9 @@ export class FlowPage implements FlowAutomation {
   private async waitForCurrentFlowVideo(before: number, timeoutMs: number): Promise<void> {
     const locators = flowLocators(this.page);
     const thumbnails = this.page.locator('img[alt="Generated video thumbnail"]');
-    const downloadButton = this.page.getByRole("button", { name: "Download media" }).first();
+    const startButton = this.page.locator('button[aria-label="Start generation"]').first();
     const deadline = Date.now() + timeoutMs;
+    let sawBusyState = false;
 
     while (Date.now() < deadline) {
       if (await locators.rateLimitMarker.first().isVisible().catch(() => false)) {
@@ -341,8 +341,12 @@ export class FlowPage implements FlowAutomation {
         throw new GenerationFailedError("Flow displayed a generation failed message.");
       }
 
-      const added = (await thumbnails.count()) - before;
-      if (added > 0 && await downloadButton.isVisible().catch(() => false)) return;
+      const thumbnailCount = await thumbnails.count();
+      const added = thumbnailCount - before;
+      if (added > 0) return;
+      const startVisible = await startButton.isVisible().catch(() => false);
+      if (!startVisible) sawBusyState = true;
+      if (sawBusyState && startVisible && thumbnailCount > 0) return;
       await this.page.waitForTimeout(1500);
     }
 

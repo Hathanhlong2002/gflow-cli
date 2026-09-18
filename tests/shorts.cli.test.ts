@@ -103,4 +103,18 @@ describe("shorts CLI", () => {
       models: { text: "gemini-text-custom", image: "gemini-image-custom", tts: "gemini-tts-custom" }
     });
   });
+
+  it("exposes render in shorts help", () => {
+    const program = createProgram();
+    const shortsCommand = program.commands.find((c) => c.name() === "shorts");
+    expect(shortsCommand).toBeDefined();
+    const renderCommand = shortsCommand?.commands.find((c) => c.name() === "render");
+    expect(renderCommand).toBeDefined();
+  });
+
+  it("exposes merge in top-level help", () => {
+    const program = createProgram();
+    const mergeCommand = program.commands.find((c) => c.name() === "merge");
+    expect(mergeCommand).toBeDefined();
+  });
 });

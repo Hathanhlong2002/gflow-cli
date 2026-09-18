@@ -16,6 +16,7 @@ import { parseAgentInstruction, parseAgentRun, parseAgentSettings, parseBatchYam
 import { runJobs } from "./jobs/runner.js";
 import { resolveOutputDir } from "./config/paths.js";
 import { registerShortsCommands, type ShortsCommandDependencies } from "./shorts/commands.js";
+import { mergeClips } from "./shorts/renderer.js";
 
 export interface CreateProgramOptions extends ShortsCommandDependencies {
   automation?: FlowAutomation;
@@ -634,6 +635,27 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       await owned.close();
     }
   });
+
+  program
+    .command("merge")
+    .description("Merge multiple Flow video clips into a single video file using FFmpeg.")
+    .argument("<clips...>", "paths to input video files in order")
+    .option("-o, --out <path>", "output merged video path", "./merged.mp4")
+    .option("--narration <path>", "optional narration audio track to mix over clips")
+    .option("--width <pixels>", "target video width", parseIntegerOption)
+    .option("--height <pixels>", "target video height", parseIntegerOption)
+    .option("--fps <fps>", "target video frame rate", parseIntegerOption)
+    .action(async (clips: string[], command: { out: string; narration?: string; width?: number; height?: number; fps?: number }) => {
+      const result = await mergeClips({
+        clipPaths: clips,
+        outputPath: command.out,
+        narrationAudioPath: command.narration,
+        targetWidth: command.width,
+        targetHeight: command.height,
+        fps: command.fps
+      });
+      console.log(`merged ${clips.length} clips -> ${result.outputPath} (${result.duration.toFixed(1)}s, ${result.width}x${result.height})`);
+    });
 
   program.configureOutput({
     writeErr: (text) => process.stderr.write(text)
