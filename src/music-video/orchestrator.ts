@@ -262,7 +262,17 @@ export async function runMusicVideo(input: RunMusicVideoInput): Promise<MusicVid
           record.status = "COMPLETED";
           continue;
         }
-        ownedFlow ??= await input.flowGeneratorFactory();
+        if (!ownedFlow) {
+          const pendingFlow = input.flowGeneratorFactory();
+          try {
+            ownedFlow = await abortable(pendingFlow, input.signal);
+          } catch (error) {
+            if (input.signal?.aborted) {
+              void pendingFlow.then((lateFlow) => lateFlow.close()).catch(() => undefined);
+            }
+            throw error;
+          }
+        }
         const imagePath = imagePathFor(input.store, record.image!);
         const generated = await abortable(ownedFlow.generator.generate({
           entry,
@@ -298,6 +308,7 @@ export async function runMusicVideo(input: RunMusicVideoInput): Promise<MusicVid
     if (journal.final && await input.store.artifactMatchesDisk(journal.final)) {
       const ready = await loadReadyResult(input.store, journal);
       if (ready) {
+        input.signal?.throwIfAborted();
         state = await updateStage(input.store, state, "READY", "Existing final render verified");
         return ready;
       }
@@ -320,9 +331,12 @@ export async function runMusicVideo(input: RunMusicVideoInput): Promise<MusicVid
       signal: input.signal
     }), input.signal);
     input.signal?.throwIfAborted();
-    journal.final = await input.store.recordArtifact(rendered.outputPath, "video/mp4");
+    const finalArtifact = await input.store.recordArtifact(rendered.outputPath, "video/mp4");
+    input.signal?.throwIfAborted();
+    journal.final = finalArtifact;
     journal.status = "READY";
     journal = await input.store.saveJournal(journal);
+    input.signal?.throwIfAborted();
     state = await updateStage(input.store, state, "READY", "Final music video passed media validation");
     await input.store.clearActionRequired();
     return { ...rendered, stage: "READY" };

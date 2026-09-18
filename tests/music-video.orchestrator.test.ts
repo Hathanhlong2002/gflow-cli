@@ -191,4 +191,32 @@ describe("music-video orchestrator", () => {
     await expect(running).rejects.toMatchObject({ name: "AbortError" });
     expect((await input.store.load()).stage).toBe("CANCELLED");
   });
+
+  it("does not commit READY when aborted during final artifact recording", async () => {
+    const root = await newRoot();
+    const input = await dependencies(root, []);
+    const controller = new AbortController();
+    input.signal = controller.signal;
+    const originalRecord = input.store.recordArtifact.bind(input.store);
+    let notifyRecording!: () => void;
+    let releaseRecording!: () => void;
+    const recording = new Promise<void>((resolvePromise) => { notifyRecording = resolvePromise; });
+    const release = new Promise<void>((resolvePromise) => { releaseRecording = resolvePromise; });
+    vi.spyOn(input.store, "recordArtifact").mockImplementation(async (path, mimeType) => {
+      if (path.endsWith("final.mp4")) {
+        notifyRecording();
+        await release;
+      }
+      return originalRecord(path, mimeType);
+    });
+
+    const running = runMusicVideo(input);
+    await recording;
+    controller.abort();
+    releaseRecording();
+
+    await expect(running).rejects.toMatchObject({ name: "AbortError" });
+    expect((await input.store.load()).stage).toBe("CANCELLED");
+    expect((await input.store.loadJournal()).status).toBe("CANCELLED");
+  });
 });
