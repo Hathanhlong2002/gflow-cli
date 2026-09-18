@@ -34,7 +34,7 @@ The completed project contains the generated song, lyrics, timed captions, creat
 - Google Lyria 3.5 generates the complete song through the Gemini Interactions API.
 - The visual track is hybrid: approximately eight key sections use 8-second Google Flow video clips, while the remaining sections use Gemini-generated images animated by FFmpeg.
 - The actual number of visual sections is calculated after probing the song. The planner keeps sections short enough to maintain visual variety while avoiding unnecessary Flow generations.
-- Lyrics are burned into the video as karaoke-style line captions and are also saved as `.ass` and plain text.
+- Lyrics are burned into the video as karaoke-style line captions when FFmpeg exposes the `ass` filter. On minimal FFmpeg builds without libass, the renderer embeds a default Vietnamese `mov_text` subtitle track instead of silently omitting lyrics. Captions are also saved as `.ass` and plain text.
 - The workflow is resumable and checkpoints every validated external artifact.
 - Existing uncommitted renderer and Flow compatibility work must be preserved and integrated, not replaced.
 
@@ -131,13 +131,13 @@ Flow entries use the existing browser automation and Google profile. A Flow vide
 
 The renderer creates line-level ASS captions from the validated song structure and returned lyrics. Returned timestamps are used when valid. If Lyria provides section timing but not trustworthy line timing, lines are distributed proportionally inside their section and the project report marks caption timing as approximate.
 
-The visual style resembles karaoke: the active lyric line is prominent and readable over changing imagery, with an outline or backing treatment for contrast. The MVP does not promise phoneme- or word-level highlighting because the provider response does not guarantee word-level alignment.
+The visual style resembles karaoke: the active lyric line is prominent and readable over changing imagery, with an outline or backing treatment for contrast. The MVP does not promise phoneme- or word-level highlighting because the provider response does not guarantee word-level alignment. If FFmpeg lacks libass, the MP4 contains the same timed lyrics as a default subtitle track and `media-report.json` records `captionMode: "embedded"` rather than claiming they were burned in.
 
 Caption text is treated as untrusted input and escaped for ASS. It is never interpolated into a shell command or an FFmpeg filter expression.
 
 ### Hybrid FFmpeg renderer
 
-The renderer uses `spawn` argument arrays with `shell: false`. It turns still images into timed 1920x1080 clips with restrained motion, normalizes Flow clips, adds transitions, concatenates the visual timeline, burns ASS captions, maps the original song as the sole final audio track, and trims only excess visuals to the probed song duration.
+The renderer uses `spawn` argument arrays with `shell: false`. It turns still images into timed 1920x1080 clips with restrained motion, normalizes Flow clips, adds transitions, concatenates the visual timeline, burns ASS captions when supported (or embeds a default `mov_text` track otherwise), maps the original song as the sole final audio track, and trims only excess visuals to the probed song duration.
 
 The final media contract requires:
 
