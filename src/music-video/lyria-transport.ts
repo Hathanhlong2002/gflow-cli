@@ -45,6 +45,7 @@ export interface GoogleLyriaTransportOptions {
   apiKey: string;
   fetcher?: FetchLike;
   timeoutMs?: number;
+  retryDelaysMs?: readonly number[];
 }
 
 export class LyriaTransportError extends Error {
@@ -192,12 +193,14 @@ export class GoogleLyriaTransport implements MusicGenerator {
   private readonly apiKey: string;
   private readonly fetcher: FetchLike;
   private readonly timeoutMs: number;
+  private readonly retryDelaysMs: readonly number[];
 
   constructor(options: GoogleLyriaTransportOptions) {
     if (options.apiKey.length === 0) throw new Error("GEMINI_API_KEY is required");
     this.apiKey = options.apiKey;
     this.fetcher = options.fetcher ?? fetch;
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.retryDelaysMs = options.retryDelaysMs ?? RETRY_DELAYS_MS;
   }
 
   async generate(input: { model: string; plan: SongPlan }): Promise<GeneratedSong> {
@@ -209,7 +212,7 @@ export class GoogleLyriaTransport implements MusicGenerator {
     };
 
     let response: Response | undefined;
-    for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt += 1) {
+    for (let attempt = 0; attempt <= this.retryDelaysMs.length; attempt += 1) {
       try {
         response = await this.fetcher(new URL(INTERACTIONS_ENDPOINT), {
           method: "POST",
@@ -220,15 +223,21 @@ export class GoogleLyriaTransport implements MusicGenerator {
           body: JSON.stringify(requestBody),
           signal: AbortSignal.timeout(this.timeoutMs)
         });
-      } catch {
-        throw new LyriaTransportError("Lyria request failed", "REQUEST_FAILED");
+      } catch (error) {
+        if (attempt === this.retryDelaysMs.length || (error instanceof Error && error.name === "AbortError")) {
+          throw new LyriaTransportError("Lyria request failed", "REQUEST_FAILED");
+        }
+        await wait(this.retryDelaysMs[attempt] ?? 0);
+        continue;
       }
 
       if (response.ok) break;
       const status = response.status;
-      const delay = retryDelayMs(response, attempt);
+      const delay = response.headers.has("retry-after")
+        ? retryDelayMs(response, attempt)
+        : (this.retryDelaysMs[attempt] ?? 0);
       await response.body?.cancel().catch(() => undefined);
-      if (!isRetryableStatus(status) || attempt === RETRY_DELAYS_MS.length) {
+      if (!isRetryableStatus(status) || attempt === this.retryDelaysMs.length) {
         throw new LyriaTransportError(`Lyria request failed with HTTP ${status}`, "HTTP_ERROR", status);
       }
       await wait(delay);

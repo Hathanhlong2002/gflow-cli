@@ -64,6 +64,10 @@ function parseBrowser(value: string): BrowserChannel {
   return value as BrowserChannel;
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
+}
+
 export function registerMusicVideoCommands(program: Command, dependencies: MusicVideoCommandDependencies = {}): void {
   const musicVideo = program.command("music-video").description("Create a complete widescreen vocal music video from one topic.");
 
@@ -89,31 +93,56 @@ export function registerMusicVideoCommands(program: Command, dependencies: Music
 
       const gemini = new GoogleGeminiTransport({ apiKey });
       const store = new MusicVideoProjectStore(resolve(process.cwd(), command.out));
-      const result = await (dependencies.musicVideoRunner ?? runMusicVideo)({
-        root: store.paths().root,
-        topic: command.topic,
-        language: command.language,
-        targetDurationSeconds: command.duration,
-        models: { text: command.textModel, image: command.imageModel, music: command.musicModel },
-        resume: command.resume,
-        store,
-        songPlanner: dependencies.musicVideoSongPlanner ?? new GeminiSongPlanner(gemini),
-        musicGenerator: dependencies.musicVideoMusicGenerator ?? new GoogleLyriaTransport({ apiKey }),
-        storyboardPlanner: dependencies.musicVideoStoryboardPlanner ?? new GeminiStoryboardPlanner(gemini),
-        imageGenerator: dependencies.musicVideoMedia ?? gemini,
-        flowGeneratorFactory: async () => {
-          const owned = await dependencies.flowAutomationFactory!({
-            profile: command.profile,
-            headed: command.headed,
-            browser: command.browser
-          });
-          return { generator: new MusicVideoFlowGenerator(owned.automation), close: owned.close };
-        },
-        probeMedia: dependencies.musicVideoProbe ?? probeMusicMedia,
-        renderer: dependencies.musicVideoRenderer ?? renderMusicVideo
-      });
+      const abortController = new AbortController();
+      const abort = () => abortController.abort(new DOMException("Music-video run interrupted", "AbortError"));
+      process.once("SIGINT", abort);
+      process.once("SIGTERM", abort);
+      const resumeCommand = [
+        "gflow music-video run",
+        `--topic ${shellQuote(command.topic)}`,
+        `--out ${shellQuote(store.paths().root)}`,
+        `--language ${shellQuote(command.language)}`,
+        `--duration ${command.duration}`,
+        `--text-model ${shellQuote(command.textModel)}`,
+        `--image-model ${shellQuote(command.imageModel)}`,
+        `--music-model ${shellQuote(command.musicModel)}`,
+        `--profile ${shellQuote(command.profile)}`,
+        `--browser ${command.browser}`,
+        command.headed ? "--headed" : "--no-headed",
+        "--resume"
+      ].join(" ");
+      try {
+        const result = await (dependencies.musicVideoRunner ?? runMusicVideo)({
+          root: store.paths().root,
+          topic: command.topic,
+          language: command.language,
+          targetDurationSeconds: command.duration,
+          models: { text: command.textModel, image: command.imageModel, music: command.musicModel },
+          resume: command.resume,
+          store,
+          songPlanner: dependencies.musicVideoSongPlanner ?? new GeminiSongPlanner(gemini),
+          musicGenerator: dependencies.musicVideoMusicGenerator ?? new GoogleLyriaTransport({ apiKey }),
+          storyboardPlanner: dependencies.musicVideoStoryboardPlanner ?? new GeminiStoryboardPlanner(gemini),
+          imageGenerator: dependencies.musicVideoMedia ?? gemini,
+          flowGeneratorFactory: async () => {
+            const owned = await dependencies.flowAutomationFactory!({
+              profile: command.profile,
+              headed: command.headed,
+              browser: command.browser
+            });
+            return { generator: new MusicVideoFlowGenerator(owned.automation), close: owned.close };
+          },
+          probeMedia: dependencies.musicVideoProbe ?? probeMusicMedia,
+          renderer: dependencies.musicVideoRenderer ?? renderMusicVideo,
+          resumeCommand,
+          signal: abortController.signal
+        });
 
-      console.log(`music video ready: ${result.outputPath}`);
-      console.log(`${result.duration.toFixed(1)}s, ${result.width}x${result.height}, captions ${result.captionMode}`);
+        console.log(`music video ready: ${result.outputPath}`);
+        console.log(`${result.duration.toFixed(1)}s, ${result.width}x${result.height}, captions ${result.captionMode}`);
+      } finally {
+        process.off("SIGINT", abort);
+        process.off("SIGTERM", abort);
+      }
     });
 }

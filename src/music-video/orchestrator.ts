@@ -8,11 +8,12 @@ import {
   UiContractError
 } from "../errors.js";
 import type { GeminiMediaTransport } from "../shorts/gemini-transport.js";
-import { buildCaptionCues, reconcileLyrics, renderAss } from "./captions.js";
+import { buildCaptionCues, parseProviderCaptionCues, reconcileLyrics, renderAss } from "./captions.js";
 import type { VisualClipGenerator } from "./flow-generator.js";
 import type { GeneratedSong, MusicGenerator } from "./lyria-transport.js";
 import { redactSensitiveText } from "./project-store.js";
 import type { MusicVideoProjectStore } from "./project-store.js";
+import { parseMusicVideoMediaReport } from "./renderer.js";
 import type { MusicMediaProbe, MusicVideoRenderResult, RenderMusicVideoInput } from "./renderer.js";
 import type { MusicVideoArtifact, MusicVideoJournal, MusicVideoProjectState, Storyboard } from "./schema.js";
 import type { SongPlanner } from "./song-planner.js";
@@ -33,6 +34,8 @@ export interface RunMusicVideoInput {
   flowGeneratorFactory: () => Promise<{ generator: VisualClipGenerator; close(): Promise<void> }>;
   probeMedia(path: string): Promise<MusicMediaProbe>;
   renderer(input: RenderMusicVideoInput): Promise<MusicVideoRenderResult>;
+  resumeCommand?: string;
+  signal?: AbortSignal;
 }
 
 export interface MusicVideoRunResult extends MusicVideoRenderResult {
@@ -66,6 +69,21 @@ async function loadOptionalJournal(store: MusicVideoProjectStore): Promise<Music
   }
 }
 
+async function loadSavedSong(store: MusicVideoProjectStore): Promise<GeneratedSong> {
+  let response: { outputText: string; structureText?: string };
+  try {
+    response = await store.loadLyriaResponse();
+  } catch (error) {
+    if (!isNotFound(error)) throw error;
+    response = { outputText: (await readFile(store.paths().lyrics, "utf8")).trim() };
+  }
+  return {
+    mimeType: "audio/mpeg",
+    bytes: new Uint8Array(await readFile(store.paths().song)),
+    ...response
+  };
+}
+
 async function updateStage(
   store: MusicVideoProjectStore,
   state: MusicVideoProjectState,
@@ -81,11 +99,8 @@ async function updateStage(
 async function loadReadyResult(store: MusicVideoProjectStore, journal: MusicVideoJournal): Promise<MusicVideoRunResult | undefined> {
   if (!journal.final || !(await store.artifactMatchesDisk(journal.final))) return undefined;
   try {
-    const report = JSON.parse(await readFile(store.paths().mediaReport, "utf8")) as MusicVideoRenderResult;
-    if (
-      typeof report.duration !== "number" || typeof report.width !== "number" || typeof report.height !== "number" ||
-      typeof report.sha256 !== "string" || report.outputPath !== store.paths().final
-    ) return undefined;
+    const report = parseMusicVideoMediaReport(JSON.parse(await readFile(store.paths().mediaReport, "utf8")) as unknown);
+    if (report.outputPath !== store.paths().final || report.reportPath !== store.paths().mediaReport) return undefined;
     return { ...report, stage: "READY" };
   } catch {
     return undefined;
@@ -122,9 +137,10 @@ export async function runMusicVideo(input: RunMusicVideoInput): Promise<MusicVid
   }
 
   try {
+    input.signal?.throwIfAborted();
     let plan;
     if (state.planHash) {
-      plan = await input.store.loadPlan();
+      plan = await input.store.loadPlan(state.planHash);
     } else {
       plan = await input.songPlanner.plan({
         topic: state.topic,
@@ -140,19 +156,11 @@ export async function runMusicVideo(input: RunMusicVideoInput): Promise<MusicVid
     let songArtifact: MusicVideoArtifact;
     if (journal?.song && await input.store.artifactMatchesDisk(journal.song)) {
       songArtifact = journal.song;
-      song = {
-        mimeType: "audio/mpeg",
-        bytes: new Uint8Array(await readFile(input.store.paths().song)),
-        outputText: (await readFile(input.store.paths().lyrics, "utf8")).trim()
-      };
+      song = await loadSavedSong(input.store);
     } else if (state.songHash) {
       songArtifact = await input.store.recordArtifact(input.store.paths().song, "audio/mpeg");
       if (songArtifact.sha256 !== state.songHash) throw new Error("Recorded song hash does not match audio/song.mp3");
-      song = {
-        mimeType: "audio/mpeg",
-        bytes: new Uint8Array(await readFile(input.store.paths().song)),
-        outputText: (await readFile(input.store.paths().lyrics, "utf8")).trim()
-      };
+      song = await loadSavedSong(input.store);
     } else {
       song = await input.musicGenerator.generate({ model: state.models.music, plan });
       reconcileLyrics(plan, song.outputText);
@@ -168,7 +176,7 @@ export async function runMusicVideo(input: RunMusicVideoInput): Promise<MusicVid
 
     let storyboard: Storyboard;
     if (state.storyboardHash) {
-      storyboard = await input.store.loadStoryboard();
+      storyboard = await input.store.loadStoryboard(state.storyboardHash, songProbe.duration);
     } else {
       storyboard = await input.storyboardPlanner.plan({ plan, durationSeconds: songProbe.duration, model: state.models.text });
       const saved = await input.store.saveStoryboard(storyboard);
@@ -192,6 +200,7 @@ export async function runMusicVideo(input: RunMusicVideoInput): Promise<MusicVid
     await input.store.saveJournal(journal);
 
     for (const entry of storyboard.entries) {
+      input.signal?.throwIfAborted();
       const record = journal.entries.find((candidate) => candidate.id === entry.id);
       if (!record) throw new Error(`Generation journal is missing ${entry.id}`);
       if (!record.image || !(await input.store.artifactMatchesDisk(record.image))) {
@@ -200,7 +209,12 @@ export async function runMusicVideo(input: RunMusicVideoInput): Promise<MusicVid
           prompt: [entry.visual, entry.motionPrompt, `Continuity: ${JSON.stringify(plan.continuity)}`].join("\n"),
           aspectRatio: "16:9"
         });
-        record.image = await input.store.writeImage(entry.id, media);
+        const image = await input.store.writeImage(entry.id, media);
+        const imageProbe = await input.probeMedia(input.store.resolveArtifactPath(image));
+        if (!imageProbe.hasVideo || !imageProbe.width || !imageProbe.height) {
+          throw new Error(`Generated image for ${entry.id} is not decodable media`);
+        }
+        record.image = image;
       }
       record.status = entry.mode === "flow-video" ? "IMAGE_READY" : "COMPLETED";
       record.error = undefined;
@@ -210,6 +224,7 @@ export async function runMusicVideo(input: RunMusicVideoInput): Promise<MusicVid
     let ownedFlow: Awaited<ReturnType<RunMusicVideoInput["flowGeneratorFactory"]>> | undefined;
     try {
       for (const entry of storyboard.entries.filter((candidate) => candidate.mode === "flow-video")) {
+        input.signal?.throwIfAborted();
         const record = journal.entries.find((candidate) => candidate.id === entry.id)!;
         if (record.video && await input.store.artifactMatchesDisk(record.video)) {
           record.status = "COMPLETED";
@@ -235,7 +250,7 @@ export async function runMusicVideo(input: RunMusicVideoInput): Promise<MusicVid
 
     const lyricCheck = reconcileLyrics(plan, song.outputText);
     if (!journal.captions || !(await input.store.artifactMatchesDisk(journal.captions))) {
-      const captionBuild = buildCaptionCues(plan, songProbe.duration);
+      const captionBuild = buildCaptionCues(plan, songProbe.duration, parseProviderCaptionCues(song.structureText));
       journal.captions = await input.store.writeCaptions(renderAss(captionBuild.cues));
       await input.store.appendEvent({
         stage: "ASSETS_READY",
@@ -285,9 +300,22 @@ export async function runMusicVideo(input: RunMusicVideoInput): Promise<MusicVid
       await input.store.writeActionRequired({
         code: error.code,
         message: redactSensitiveText(error.message),
-        resumeCommand: "gflow music-video run --resume"
+        resumeCommand: input.resumeCommand ?? `gflow music-video run --topic ${JSON.stringify(state.topic)} --out ${JSON.stringify(input.root)} --resume`
       });
       await input.store.appendEvent({ stage: "PAUSED", code: error.code, message: error.message });
+    } else {
+      const cancelled = error instanceof Error && error.name === "AbortError";
+      const terminalStage = cancelled ? "CANCELLED" : "FAILED";
+      state = await input.store.saveState({ ...state, stage: terminalStage });
+      if (journal) {
+        journal.status = terminalStage;
+        await input.store.saveJournal(journal);
+      }
+      await input.store.appendEvent({
+        stage: terminalStage,
+        code: cancelled ? "CANCELLED" : "RUN_FAILED",
+        message: error instanceof Error ? error.message : "Music-video run failed"
+      });
     }
     throw error;
   }

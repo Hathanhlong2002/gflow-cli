@@ -56,6 +56,12 @@ export class DownloadError extends GFlowError {
   }
 }
 
+export class RenderError extends GFlowError {
+  constructor(message: string) {
+    super("RENDER_FAILED", `Media rendering failed: ${message}`);
+  }
+}
+
 export function exitCodeForError(error: unknown): number {
   if (error instanceof LoginRequiredError) return 2;
   if (error instanceof ManualActionRequiredError) return 2;
@@ -65,6 +71,7 @@ export function exitCodeForError(error: unknown): number {
   if (error instanceof CreditLimitError) return 6;
   if (error instanceof GenerationFailedError) return 7;
   if (error instanceof DownloadError) return 8;
+  if (error instanceof RenderError) return 9;
   return 1;
 }
 

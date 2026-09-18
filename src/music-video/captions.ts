@@ -18,6 +18,22 @@ const cueSchema = z.object({
   endSeconds: z.number().finite().positive().max(600)
 }).strict().refine((cue) => cue.endSeconds > cue.startSeconds, "caption end must be after start");
 
+const providerTimingSchema = z.union([
+  z.array(cueSchema).min(1).max(500),
+  z.object({ cues: z.array(cueSchema).min(1).max(500) }).strict()
+]);
+
+export function parseProviderCaptionCues(structureText?: string): CaptionCue[] | undefined {
+  if (!structureText) return undefined;
+  const bounded = z.string().min(1).max(2 * 1024 * 1024).parse(structureText);
+  try {
+    const parsed = providerTimingSchema.parse(JSON.parse(bounded) as unknown);
+    return Array.isArray(parsed) ? parsed : parsed.cues;
+  } catch {
+    return undefined;
+  }
+}
+
 function normalizeLyric(value: string): string {
   return value
     .normalize("NFKC")

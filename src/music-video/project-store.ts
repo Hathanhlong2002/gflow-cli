@@ -215,8 +215,12 @@ export class MusicVideoProjectStore {
     return { plan, sha256: createHash("sha256").update(content).digest("hex") };
   }
 
-  async loadPlan(): Promise<SongPlan> {
-    return parseSongPlan(JSON.parse(await readFile(this.projectPaths.plan, "utf8")) as unknown);
+  async loadPlan(expectedHash?: string): Promise<SongPlan> {
+    const content = await readFile(this.projectPaths.plan, "utf8");
+    if (expectedHash && createHash("sha256").update(content).digest("hex") !== expectedHash) {
+      throw new Error("Song plan checkpoint failed hash integrity validation");
+    }
+    return parseSongPlan(JSON.parse(content) as unknown);
   }
 
   async saveStoryboard(value: Storyboard): Promise<{ storyboard: Storyboard; sha256: string }> {
@@ -226,9 +230,12 @@ export class MusicVideoProjectStore {
     return { storyboard, sha256: createHash("sha256").update(content).digest("hex") };
   }
 
-  async loadStoryboard(): Promise<Storyboard> {
-    const value = JSON.parse(await readFile(this.projectPaths.storyboard, "utf8")) as unknown;
-    return parseStoryboard(value);
+  async loadStoryboard(expectedHash?: string, expectedDurationSeconds?: number): Promise<Storyboard> {
+    const content = await readFile(this.projectPaths.storyboard, "utf8");
+    if (expectedHash && createHash("sha256").update(content).digest("hex") !== expectedHash) {
+      throw new Error("Storyboard checkpoint failed hash integrity validation");
+    }
+    return parseStoryboard(JSON.parse(content) as unknown, expectedDurationSeconds);
   }
 
   async saveJournal(value: MusicVideoJournal): Promise<MusicVideoJournal> {
@@ -284,6 +291,13 @@ export class MusicVideoProjectStore {
     }).strict().parse(value);
     await atomicWrite(this.projectPaths.lyriaResponse, `${JSON.stringify(response, null, 2)}\n`);
     return this.recordArtifact(this.projectPaths.lyriaResponse, "application/json");
+  }
+
+  async loadLyriaResponse(): Promise<{ outputText: string; structureText?: string }> {
+    return z.object({
+      outputText: z.string().min(1).max(2 * 1024 * 1024),
+      structureText: z.string().max(2 * 1024 * 1024).optional()
+    }).strict().parse(JSON.parse(await readFile(this.projectPaths.lyriaResponse, "utf8")) as unknown);
   }
 
   async writeActionRequired(value: { code: string; message: string; resumeCommand: string }): Promise<void> {

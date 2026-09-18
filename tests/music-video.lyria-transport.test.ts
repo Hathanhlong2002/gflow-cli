@@ -70,6 +70,22 @@ describe("Google Lyria transport", () => {
     expect(attempts).toBe(2);
   });
 
+  it("retries a transient network failure with bounded backoff", async () => {
+    let attempts = 0;
+    const transport = new GoogleLyriaTransport({
+      apiKey: "secret",
+      retryDelaysMs: [0],
+      fetcher: async () => {
+        attempts += 1;
+        if (attempts === 1) throw new TypeError("connection reset");
+        return lyriaResponse();
+      }
+    });
+
+    await expect(transport.generate({ model: "lyria-3.5", plan: validSongPlan() })).resolves.toBeDefined();
+    expect(attempts).toBe(2);
+  });
+
   it.each([
     ["unsupported MIME", lyriaResponse({ mimeType: "audio/wav" }), /MIME/i],
     ["malformed base64", lyriaResponse({ data: "!!!!" }), /base64/i],

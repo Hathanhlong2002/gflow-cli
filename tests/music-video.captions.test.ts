@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildCaptionCues, reconcileLyrics, renderAss } from "../src/music-video/captions.js";
+import { buildCaptionCues, parseProviderCaptionCues, reconcileLyrics, renderAss } from "../src/music-video/captions.js";
 import { validSongPlan } from "./fixtures/music-video.js";
 
 const RETURNED_LYRICS = [
@@ -48,6 +48,8 @@ describe("music-video lyric captions", () => {
     ];
     const result = buildCaptionCues(validSongPlan(), 178.4, providerCues);
     expect(result).toEqual({ timing: "provider", cues: providerCues });
+    expect(parseProviderCaptionCues(JSON.stringify({ cues: providerCues }))).toEqual(providerCues);
+    expect(parseProviderCaptionCues("not-json")).toBeUndefined();
   });
 
   it("renders readable 1080p ASS and escapes untrusted dialogue text", () => {

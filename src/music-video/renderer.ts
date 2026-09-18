@@ -6,12 +6,27 @@ import { z } from "zod";
 import { RenderError } from "../errors.js";
 import type { Storyboard } from "./schema.js";
 
+export const musicVideoMediaReportSchema = z.object({
+  outputPath: z.string().min(1),
+  reportPath: z.string().min(1),
+  duration: z.number().finite().positive(),
+  bytes: z.number().int().positive(),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+  captionMode: z.enum(["burned", "embedded"]),
+  fps: z.number().int().positive(),
+  visualCount: z.number().int().positive(),
+  renderedAt: z.string().datetime()
+}).strict();
+
 export interface MusicMediaStream {
   codecType: "video" | "audio" | "other";
   codecName?: string;
   width?: number;
   height?: number;
   rFrameRate?: string;
+  sampleAspectRatio?: string;
   sampleRate?: number;
   channels?: number;
 }
@@ -53,6 +68,10 @@ export interface MusicVideoRenderResult {
   width: number;
   height: number;
   captionMode: "burned" | "embedded";
+}
+
+export function parseMusicVideoMediaReport(value: unknown): MusicVideoRenderResult & { fps: number; visualCount: number; renderedAt: string } {
+  return musicVideoMediaReportSchema.parse(value);
 }
 
 interface ProcessOptions {
@@ -103,7 +122,7 @@ export async function probeMusicMedia(filePath: string): Promise<MusicMediaProbe
   }
   const { stdout } = await runProcess("ffprobe", [
     "-v", "error",
-    "-show_entries", "format=duration,size:stream=codec_type,codec_name,width,height,r_frame_rate,sample_rate,channels",
+    "-show_entries", "format=duration,size:stream=codec_type,codec_name,width,height,r_frame_rate,sample_aspect_ratio,sample_rate,channels",
     "-of", "json",
     path
   ], { timeoutMs: 30_000 });
@@ -116,6 +135,7 @@ export async function probeMusicMedia(filePath: string): Promise<MusicMediaProbe
       width: z.number().optional(),
       height: z.number().optional(),
       r_frame_rate: z.string().optional(),
+      sample_aspect_ratio: z.string().optional(),
       sample_rate: z.string().optional(),
       channels: z.number().optional()
     }).passthrough()).optional()
@@ -132,6 +152,7 @@ export async function probeMusicMedia(filePath: string): Promise<MusicMediaProbe
     width: stream.width,
     height: stream.height,
     rFrameRate: stream.r_frame_rate,
+    sampleAspectRatio: stream.sample_aspect_ratio,
     sampleRate: stream.sample_rate ? Number.parseInt(stream.sample_rate, 10) : undefined,
     channels: stream.channels
   }));
@@ -281,26 +302,41 @@ export async function renderMusicVideo(input: RenderMusicVideoInput): Promise<Mu
   }
   args.push(temporaryOutputPath);
 
+  let probe: MusicMediaProbe;
   try {
     await runProcess("ffmpeg", args, { timeoutMs, cwd: dirname(captionsPath) });
-    await rename(temporaryOutputPath, outputPath);
+    probe = await probeMusicMedia(temporaryOutputPath);
   } catch (error) {
     await unlink(temporaryOutputPath).catch(() => undefined);
     if (error instanceof RenderError) throw error;
     throw new RenderError(error instanceof Error ? error.message : "FFmpeg render failed");
   }
 
-  const probe = await probeMusicMedia(outputPath);
-  const video = probe.streams.find((stream) => stream.codecType === "video");
-  const audio = probe.streams.find((stream) => stream.codecType === "audio");
+  const videos = probe.streams.filter((stream) => stream.codecType === "video");
+  const audios = probe.streams.filter((stream) => stream.codecType === "audio");
+  const others = probe.streams.filter((stream) => stream.codecType === "other");
+  const video = videos[0];
+  const audio = audios[0];
+  const parsedFps = video?.rFrameRate?.includes("/")
+    ? Number(video.rFrameRate.split("/")[0]) / Number(video.rFrameRate.split("/")[1])
+    : Number(video?.rFrameRate);
   if (
+    videos.length !== 1 || audios.length !== 1 || (captionMode === "burned" ? others.length !== 0 : others.length !== 1) ||
     !video || !audio || video.codecName !== "h264" || audio.codecName !== "aac" || audio.channels !== 2 ||
+    !Number.isFinite(parsedFps) || Math.abs(parsedFps - fps) > 0.01 ||
+    video.sampleAspectRatio !== "1:1" ||
     probe.width !== width || probe.height !== height || Math.abs(probe.duration - input.storyboard.durationSeconds) > 0.25
   ) {
+    await unlink(temporaryOutputPath).catch(() => undefined);
     throw new RenderError(`Rendered media contract failed: ${JSON.stringify({
       videoCodec: video?.codecName,
       audioCodec: audio?.codecName,
       audioChannels: audio?.channels,
+      fps: parsedFps,
+      sampleAspectRatio: video?.sampleAspectRatio,
+      videoStreams: videos.length,
+      audioStreams: audios.length,
+      otherStreams: others.length,
       width: probe.width,
       height: probe.height,
       duration: probe.duration,
@@ -308,11 +344,14 @@ export async function renderMusicVideo(input: RenderMusicVideoInput): Promise<Mu
     })}`);
   }
 
+  await rename(temporaryOutputPath, outputPath);
+
   const bytes = await readFile(outputPath);
   const sha256 = createHash("sha256").update(bytes).digest("hex");
   const report = {
     outputPath,
-    durationSeconds: probe.duration,
+    reportPath,
+    duration: probe.duration,
     width,
     height,
     fps,

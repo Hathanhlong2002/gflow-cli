@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { MusicVideoProjectStore } from "../src/music-video/project-store.js";
+import { validSongPlan, validStoryboard } from "./fixtures/music-video.js";
 
 const MP3 = new Uint8Array([0x49, 0x44, 0x33, 0x04, 0x00, 0x00]);
 const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
@@ -83,5 +84,17 @@ describe("music-video project store", () => {
     expect(Number.isNaN(Date.parse(event.timestamp))).toBe(false);
     expect(event.message).toContain("[REDACTED]");
     expect(event.message).not.toContain("AIza123");
+  });
+
+  it("rejects changed plan and storyboard checkpoints by hash and duration", async () => {
+    const { store } = await createStore();
+    const plan = await store.savePlan(validSongPlan());
+    const storyboard = await store.saveStoryboard(validStoryboard());
+
+    await expect(store.loadPlan(plan.sha256)).resolves.toEqual(validSongPlan());
+    await expect(store.loadStoryboard(storyboard.sha256, 180)).resolves.toEqual(validStoryboard());
+    await writeFile(store.paths().plan, `${JSON.stringify({ ...validSongPlan(), title: "Changed" })}\n`);
+    await expect(store.loadPlan(plan.sha256)).rejects.toThrow(/hash|integrity/i);
+    await expect(store.loadStoryboard(storyboard.sha256, 179)).rejects.toThrow(/duration/i);
   });
 });

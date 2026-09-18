@@ -111,8 +111,11 @@ describe("hybrid music-video renderer", () => {
     const probe = await probeMusicMedia(outputPath);
     expect(probe).toMatchObject({ hasVideo: true, hasAudio: true, width: 1920, height: 1080 });
     expect(probe.streams.some((stream) => stream.codecType === "video" && stream.codecName === "h264")).toBe(true);
+    expect(probe.streams.find((stream) => stream.codecType === "video")?.sampleAspectRatio).toBe("1:1");
     expect(probe.streams.some((stream) => stream.codecType === "audio" && stream.codecName === "aac" && stream.channels === 2)).toBe(true);
     const report = JSON.parse(await readFile(reportPath, "utf8"));
+    expect(report.duration).toBe(result.duration);
+    expect(report).not.toHaveProperty("durationSeconds");
     expect(report.captionMode).toBe(result.captionMode);
     if (result.captionMode === "embedded") {
       expect(probe.streams.some((stream) => stream.codecType === "other" && stream.codecName === "mov_text")).toBe(true);

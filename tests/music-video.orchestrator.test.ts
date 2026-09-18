@@ -87,7 +87,12 @@ describe("music-video orchestrator", () => {
           height: 1080,
           captionMode: "embedded" as const
         };
-        await writeFile(input.reportPath, `${JSON.stringify(result)}\n`);
+        await writeFile(input.reportPath, `${JSON.stringify({
+          ...result,
+          fps: 30,
+          visualCount: validStoryboard().entries.length,
+          renderedAt: new Date().toISOString()
+        })}\n`);
         return result;
       }
     };
@@ -142,6 +147,28 @@ describe("music-video orchestrator", () => {
     const action = await readFile(input.store.paths().actionRequired, "utf8");
     expect(action).toContain("CREDIT_LIMIT");
     expect(action).toContain("--resume");
+    expect(action).toContain("--topic");
+    expect(action).toContain("--out");
     expect(action).not.toContain("secret-value");
+  });
+
+  it("records FAILED for an ordinary provider error", async () => {
+    const root = await newRoot();
+    const input = await dependencies(root, []);
+    input.songPlanner.plan = async () => { throw new Error("planner unavailable"); };
+
+    await expect(runMusicVideo(input)).rejects.toThrow(/planner unavailable/);
+    expect((await input.store.load()).stage).toBe("FAILED");
+  });
+
+  it("records CANCELLED when the caller aborts", async () => {
+    const root = await newRoot();
+    const input = await dependencies(root, []);
+    const controller = new AbortController();
+    controller.abort();
+    input.signal = controller.signal;
+
+    await expect(runMusicVideo(input)).rejects.toMatchObject({ name: "AbortError" });
+    expect((await input.store.load()).stage).toBe("CANCELLED");
   });
 });
