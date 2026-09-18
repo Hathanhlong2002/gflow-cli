@@ -41,6 +41,16 @@ describe("Gemini media transport", () => {
     expect(body.generationConfig).toEqual({ responseModalities: ["IMAGE"], imageConfig: { aspectRatio: "9:16" } });
   });
 
+  it("supports 16:9 image generation for music videos", async () => {
+    const fetcher = vi.fn<Parameters<FetchLike>, ReturnType<FetchLike>>(async () => inlineResponse("image/jpeg", JPEG_BYTES));
+    const transport = new GoogleGeminiTransport({ apiKey: "secret", fetcher });
+
+    await transport.generateImage({ model: "gemini-image", prompt: "cinematic love story", aspectRatio: "16:9" });
+
+    const body = JSON.parse(String(fetcher.mock.calls[0]![1]?.body));
+    expect(body.generationConfig.imageConfig).toEqual({ aspectRatio: "16:9" });
+  });
+
   it("requests single-speaker narration and returns 24 kHz PCM", async () => {
     const fetcher = vi.fn<Parameters<FetchLike>, ReturnType<FetchLike>>(
       async () => inlineResponse("audio/L16;codec=pcm;rate=24000", PCM_BYTES)

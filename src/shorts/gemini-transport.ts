@@ -59,7 +59,7 @@ export interface PcmAudio {
 }
 
 export interface GeminiMediaTransport {
-  generateImage(input: { model: string; prompt: string; aspectRatio: "9:16" }): Promise<BinaryMedia>;
+  generateImage(input: { model: string; prompt: string; aspectRatio: "9:16" | "16:9" }): Promise<BinaryMedia>;
   generateSpeech(input: { model: string; text: string; voice: string }): Promise<PcmAudio>;
 }
 
@@ -237,7 +237,7 @@ export class GoogleGeminiTransport implements GeminiTransport, GeminiMediaTransp
     }
   }
 
-  async generateImage(input: { model: string; prompt: string; aspectRatio: "9:16" }): Promise<BinaryMedia> {
+  async generateImage(input: { model: string; prompt: string; aspectRatio: "9:16" | "16:9" }): Promise<BinaryMedia> {
     const prompt = z.string().trim().min(1).max(10_000).parse(input.prompt);
     const envelope = await this.generateContent(
       input.model,
