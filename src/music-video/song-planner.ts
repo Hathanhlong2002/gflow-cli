@@ -49,7 +49,10 @@ export const MUSIC_PLAN_RESPONSE_SCHEMA: Record<string, unknown> = {
     sections: {
       type: "array",
       minItems: 2,
-      maxItems: 30,
+      // Keep in sync with the sections bound in schema.ts: Gemini's structured-output
+      // validator rejects this whole request with a bare HTTP 400 once this climbs much
+      // past 8 alongside the plan's other fields (verified empirically, no detailed error body).
+      maxItems: 8,
       items: {
         type: "object",
         additionalProperties: false,

@@ -38,7 +38,10 @@ function normalizeLyric(value: string): string {
   return value
     .normalize("NFKC")
     .toLocaleLowerCase("vi")
-    .replace(/^\s*\[[^\]]+\]\s*$/g, "")
+    // Lyria prefixes every line with section/timestamp tags, e.g. "[[A0]]" on its own line
+    // and "[0.0:] lyric text" on content lines; strip those leading tags (not just a
+    // whole-line tag) before comparing against the plain planned lyrics.
+    .replace(/^\s*(?:\[[^\]]*\]\s*)+/, "")
     .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim()
     .replace(/\s+/g, " ");

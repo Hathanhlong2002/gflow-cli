@@ -63,7 +63,10 @@ export const songPlanSchema = z
         prohibitedChanges: z.array(z.string().trim().min(1).max(500)).max(30)
       })
       .strict(),
-    sections: z.array(songSectionSchema).min(2).max(30)
+    // Gemini's structured-output schema validator rejects this request body with a bare
+    // HTTP 400 once sections.maxItems climbs much past 8 alongside the plan's other fields
+    // (verified empirically); keep this in sync with MUSIC_PLAN_RESPONSE_SCHEMA in song-planner.ts.
+    sections: z.array(songSectionSchema).min(2).max(8)
   })
   .strict()
   .superRefine((plan, context) => {

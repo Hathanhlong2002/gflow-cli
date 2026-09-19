@@ -42,6 +42,17 @@ export interface MusicVideoRunResult extends MusicVideoRenderResult {
   stage: "READY";
 }
 
+const MAX_EVENT_MESSAGE_LENGTH = 1000;
+
+// appendEvent/writeActionRequired reject messages over 1000 chars; an untruncated Playwright or
+// stack-trace message would otherwise throw while merely trying to record the real failure,
+// masking it behind that secondary validation error.
+function truncateEventMessage(message: string): string {
+  const trimmed = message.trim();
+  if (trimmed.length === 0) return "Music-video run failed";
+  return trimmed.length > MAX_EVENT_MESSAGE_LENGTH ? `${trimmed.slice(0, MAX_EVENT_MESSAGE_LENGTH - 1)}…` : trimmed;
+}
+
 function isNotFound(error: unknown): boolean {
   return error instanceof Error && (error as NodeJS.ErrnoException).code === "ENOENT";
 }
@@ -187,9 +198,12 @@ export async function runMusicVideo(input: RunMusicVideoInput): Promise<MusicVid
     } else {
       song = await abortable(input.musicGenerator.generate({ model: state.models.music, plan, signal: input.signal }), input.signal);
       input.signal?.throwIfAborted();
-      reconcileLyrics(plan, song.outputText);
+      // Persist the raw generated song and its provider text before validating: reconcileLyrics
+      // throws on a bad match, and losing the (expensive to regenerate) artifact on that throw
+      // makes the failure unrecoverable and undebuggable.
       songArtifact = await input.store.writeSong(song);
       await input.store.writeLyriaResponse({ outputText: song.outputText, ...(song.structureText ? { structureText: song.structureText } : {}) });
+      reconcileLyrics(plan, song.outputText);
       state = await updateStage(input.store, state, "SONG_READY", "Generated song validated and saved", { songHash: songArtifact.sha256 });
     }
 
@@ -349,10 +363,10 @@ export async function runMusicVideo(input: RunMusicVideoInput): Promise<MusicVid
       }
       await input.store.writeActionRequired({
         code: error.code,
-        message: redactSensitiveText(error.message),
+        message: truncateEventMessage(redactSensitiveText(error.message)),
         resumeCommand: input.resumeCommand ?? `gflow music-video run --topic ${JSON.stringify(state.topic)} --out ${JSON.stringify(input.root)} --resume`
       });
-      await input.store.appendEvent({ stage: "PAUSED", code: error.code, message: error.message });
+      await input.store.appendEvent({ stage: "PAUSED", code: error.code, message: truncateEventMessage(error.message) });
     } else {
       const cancelled = error instanceof Error && error.name === "AbortError";
       const terminalStage = cancelled ? "CANCELLED" : "FAILED";
@@ -364,7 +378,7 @@ export async function runMusicVideo(input: RunMusicVideoInput): Promise<MusicVid
       await input.store.appendEvent({
         stage: terminalStage,
         code: cancelled ? "CANCELLED" : "RUN_FAILED",
-        message: error instanceof Error ? error.message : "Music-video run failed"
+        message: truncateEventMessage(error instanceof Error ? error.message : "Music-video run failed")
       });
     }
     throw error;
