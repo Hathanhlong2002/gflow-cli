@@ -7,6 +7,7 @@ import {
   LoginRequiredError,
   ManualActionRequiredError,
   RateLimitedError,
+  RenderError,
   UiContractError,
   exitCodeForError,
   messageForError
@@ -22,6 +23,7 @@ describe("exitCodeForError", () => {
     expect(exitCodeForError(new CreditLimitError("No credits"))).toBe(6);
     expect(exitCodeForError(new GenerationFailedError("Generation failed"))).toBe(7);
     expect(exitCodeForError(new DownloadError("Missing download"))).toBe(8);
+    expect(exitCodeForError(new RenderError("FFmpeg failed"))).toBe(9);
     expect(exitCodeForError(new Error("Unknown"))).toBe(1);
   });
 });

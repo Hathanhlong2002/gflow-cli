@@ -284,6 +284,70 @@ describe("FlowPage fixture", () => {
     }
   });
 
+  it("answers the live Flow Agent credit prompt with Always approve and ignores read-only ones", async () => {
+    const profileDir = await mkdtemp(join(tmpdir(), "gflow-profile-"));
+    const outDir = await mkdtemp(join(tmpdir(), "gflow-output-"));
+    const context = await chromium.launchPersistentContext(profileDir, { headless: true, acceptDownloads: true });
+    const staleAnsweredPrompt =
+      '<flow-permission-message id="stale"><div role="radiogroup">' +
+      '<div role="radio" aria-label="Always approve" aria-checked="false" aria-disabled="true" class="read-only">Always approve</div>' +
+      "</div></flow-permission-message>";
+    const livePromptScript = `
+      window.__choice = null;
+      window.__staleClicked = false;
+      document.getElementById("stale").addEventListener("click", () => { window.__staleClicked = true; });
+      create.addEventListener("click", () => {
+        const live = document.createElement("flow-permission-message");
+        live.innerHTML = '<p>Would you like me to kick off this 1 video generation, costing 15 credits?</p>' +
+          '<div role="radiogroup">' +
+          '<div role="radio" aria-label="Approve" aria-checked="false" tabindex="0">Approve</div>' +
+          '<div role="radio" aria-label="Always approve" aria-checked="false" tabindex="0">Always approve</div>' +
+          '<div role="radio" aria-label="Reject" aria-checked="false" tabindex="0">Reject</div></div>';
+        document.body.appendChild(live);
+        for (const option of live.querySelectorAll('[role="radio"]')) {
+          option.addEventListener("click", () => {
+            window.__choice = option.getAttribute("aria-label");
+            live.remove();
+            if (window.__choice === "Always approve") window.setTimeout(window.__finish, 300);
+          });
+        }
+      });`;
+
+    try {
+      const page = context.pages()[0] ?? (await context.newPage());
+      // Generation only completes once the live prompt is answered, as in Flow Agent.
+      await page.setContent(
+        currentFlowVideoFixture
+          .replace("window.setTimeout(() => {", "window.__finish = () => {")
+          .replace("}, 100);", "};")
+          .replace('<div role="dialog" hidden>', `${staleAnsweredPrompt}<div role="dialog" hidden>`)
+          .replace("</script>", `${livePromptScript}</script>`)
+      );
+
+      const result = await new FlowPage(page).runJob({
+        job: {
+          id: "approval-clip",
+          type: "video",
+          prompt: "A small boat crossing calm ocean water",
+          ratio: "9:16",
+          duration: 8,
+          outputs: 1,
+          timeout: 10,
+          out: outDir,
+          ingredients: [],
+          character: []
+        },
+        outDir
+      });
+
+      expect(result.artifacts).toHaveLength(1);
+      expect(await page.evaluate(() => (window as unknown as { __choice: string }).__choice)).toBe("Always approve");
+      expect(await page.evaluate(() => (window as unknown as { __staleClicked: boolean }).__staleClicked)).toBe(false);
+    } finally {
+      await context.close();
+    }
+  });
+
   it("navigates to the requested project before generating", async () => {
     const profileDir = await mkdtemp(join(tmpdir(), "gflow-profile-"));
     const outDir = await mkdtemp(join(tmpdir(), "gflow-output-"));

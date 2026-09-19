@@ -40,6 +40,7 @@ export interface GeminiJsonRequest {
   systemInstruction: string;
   prompt: string;
   responseSchema: Record<string, unknown>;
+  signal?: AbortSignal;
 }
 
 export interface GeminiTransport {
@@ -59,8 +60,8 @@ export interface PcmAudio {
 }
 
 export interface GeminiMediaTransport {
-  generateImage(input: { model: string; prompt: string; aspectRatio: "9:16" }): Promise<BinaryMedia>;
-  generateSpeech(input: { model: string; text: string; voice: string }): Promise<PcmAudio>;
+  generateImage(input: { model: string; prompt: string; aspectRatio: "9:16" | "16:9"; signal?: AbortSignal }): Promise<BinaryMedia>;
+  generateSpeech(input: { model: string; text: string; voice: string; signal?: AbortSignal }): Promise<PcmAudio>;
 }
 
 export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -166,7 +167,7 @@ export class GoogleGeminiTransport implements GeminiTransport, GeminiMediaTransp
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
 
-  private async generateContent(model: string, body: Record<string, unknown>, maximumBytes: number): Promise<z.infer<typeof geminiEnvelopeSchema>> {
+  private async generateContent(model: string, body: Record<string, unknown>, maximumBytes: number, signal?: AbortSignal): Promise<z.infer<typeof geminiEnvelopeSchema>> {
     if (!/^[a-zA-Z0-9._-]+$/.test(model)) {
       throw new GeminiTransportError("Invalid Gemini model name", "INVALID_MODEL");
     }
@@ -182,7 +183,7 @@ export class GoogleGeminiTransport implements GeminiTransport, GeminiMediaTransp
             "x-goog-api-key": this.apiKey
           },
           body: JSON.stringify(body),
-          signal: AbortSignal.timeout(this.timeoutMs)
+          signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(this.timeoutMs)]) : AbortSignal.timeout(this.timeoutMs)
         });
       } catch {
         throw new GeminiTransportError("Gemini request failed", "REQUEST_FAILED");
@@ -219,7 +220,8 @@ export class GoogleGeminiTransport implements GeminiTransport, GeminiMediaTransp
             responseJsonSchema: input.responseSchema
           }
       },
-      MAX_JSON_RESPONSE_BYTES
+      MAX_JSON_RESPONSE_BYTES,
+      input.signal
     );
 
     const generatedText = envelope.candidates
@@ -237,7 +239,7 @@ export class GoogleGeminiTransport implements GeminiTransport, GeminiMediaTransp
     }
   }
 
-  async generateImage(input: { model: string; prompt: string; aspectRatio: "9:16" }): Promise<BinaryMedia> {
+  async generateImage(input: { model: string; prompt: string; aspectRatio: "9:16" | "16:9"; signal?: AbortSignal }): Promise<BinaryMedia> {
     const prompt = z.string().trim().min(1).max(10_000).parse(input.prompt);
     const envelope = await this.generateContent(
       input.model,
@@ -248,7 +250,8 @@ export class GoogleGeminiTransport implements GeminiTransport, GeminiMediaTransp
           imageConfig: { aspectRatio: input.aspectRatio }
         }
       },
-      MAX_IMAGE_RESPONSE_BYTES
+      MAX_IMAGE_RESPONSE_BYTES,
+      input.signal
     );
     const inlineData = envelope.candidates.flatMap((candidate) => candidate.content.parts).find((part) => part.inlineData)?.inlineData;
     if (!inlineData) throw new GeminiTransportError("Gemini response did not contain inline image data", "MISSING_CONTENT");
@@ -258,7 +261,7 @@ export class GoogleGeminiTransport implements GeminiTransport, GeminiMediaTransp
     return { mimeType: inlineData.mimeType, bytes: decodeBase64(inlineData.data, MAX_IMAGE_BYTES) };
   }
 
-  async generateSpeech(input: { model: string; text: string; voice: string }): Promise<PcmAudio> {
+  async generateSpeech(input: { model: string; text: string; voice: string; signal?: AbortSignal }): Promise<PcmAudio> {
     const text = z.string().trim().min(1).max(10_000).parse(input.text);
     const voice = z.string().trim().min(1).max(100).regex(/^[a-zA-Z0-9._-]+$/).parse(input.voice);
     const envelope = await this.generateContent(
@@ -270,7 +273,8 @@ export class GoogleGeminiTransport implements GeminiTransport, GeminiMediaTransp
           speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } }
         }
       },
-      MAX_AUDIO_RESPONSE_BYTES
+      MAX_AUDIO_RESPONSE_BYTES,
+      input.signal
     );
     const inlineData = envelope.candidates.flatMap((candidate) => candidate.content.parts).find((part) => part.inlineData)?.inlineData;
     if (!inlineData) throw new GeminiTransportError("Gemini response did not contain inline audio data", "MISSING_CONTENT");

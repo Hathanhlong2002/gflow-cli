@@ -6,6 +6,7 @@ coverage/
 gflow-output/
 shorts-output/
 music-output/
+scratch/
 .env
 .env.*
 !.env.example

@@ -31,6 +31,7 @@ browser session — no private APIs, no login bypass.
 - 📦 **Batch pipelines** — run many jobs from a YAML file
 - ⬆️ **Full-quality downloads** — pulls Flow's native asset via the in-app Download menu; add `--upscale 2k` or `--upscale 4k` for upscaled tiers
 - 🎬➕ **Scene extend** — chain prompts to grow a video ~7s at a time (up to 148s) and append other clips, building long videos with a real story
+- 🎵 **Music video from one topic** — creates an original vocal song, 16:9 hybrid visuals, captions, and one final MP4
 - 🧑‍🎨 **Characters** — create and reuse saved character references across generations
 - 🛠️ **Tools** — build and open custom Flow tools (image-filter, style-morph, etc.)
 - 🤖 **Agent** — drive the Flow Agent with a prompt, configure its defaults, and manage persistent instructions
@@ -421,6 +422,51 @@ npm test
 CI (lint + build + test on Node 20 & 22) runs on every push and pull request.
 
 ## Flow Shorts Factory: plan and generate
+
+### One-command 16:9 music video
+
+`gflow music-video run` turns one topic into an original vocal song and a finished approximately
+three-minute music video. Gemini plans the Vietnamese lyrics and storyboard, Google Lyria model
+`lyria-3.5` generates the song, Gemini generates a 16:9 image for each eight-second window, and
+Google Flow animates up to eight key windows. FFmpeg renders the remaining images with motion,
+mixes the song, and writes a 1920x1080 MP4.
+
+Requirements: set `GEMINI_API_KEY`, install `ffmpeg` and `ffprobe`, and sign in to Flow once with
+the same browser profile. The API key is read only from the environment; it is not accepted as a
+CLI option or saved in project artifacts.
+
+```bash
+npm run dev -- auth login --profile music
+# Finish Google sign-in, then run:
+node --env-file=.env --import tsx src/index.ts music-video run \
+  --topic "Tình yêu" \
+  --out ./music-video-output/tinh-yeu \
+  --profile music
+```
+
+The command defaults to Vietnamese (`vi-VN`), 180 seconds, 16:9, `gemini-3.5-flash`,
+`gemini-2.5-flash-image`, and `lyria-3.5`. Generation is checkpointed after every artifact. If
+login, manual verification, rate limit, or credits interrupt the run, resolve the reported action
+and continue without regenerating valid files:
+
+```bash
+node --env-file=.env --import tsx src/index.ts music-video run \
+  --topic "Tình yêu" \
+  --out ./music-video-output/tinh-yeu \
+  --profile music \
+  --resume
+```
+
+Lyric captions use section timing when the music provider does not return word timestamps, so
+their synchronization is approximate. FFmpeg burns ASS captions when that filter is available;
+otherwise it embeds a selectable Vietnamese subtitle track. Keep AI provenance intact: do not
+remove provider watermarks or SynthID, and disclose AI-generated music/video where required.
+
+The workflow can consume Gemini/Lyria quota and up to eight Flow video generations per run. It
+does not bypass login, CAPTCHA, manual checks, quotas, or credit limits. See the
+[Vietnamese run guide](docs/shorts-run-guide.md) for output layout and recovery steps.
+
+### Vertical shorts series
 
 Create a validated story manifest with exactly ten episodes and ten 8-second scenes per episode,
 then generate a vertical opening image, narration WAV, and one Google Flow clip for each scene. Set

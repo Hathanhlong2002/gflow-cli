@@ -320,6 +320,15 @@ export class FlowPage implements FlowAutomation {
     });
   }
 
+  // Flow Agent stalls on a credit-spend prompt until someone answers it, which otherwise runs the
+  // whole generation timeout. The user asked for "Always approve" to be chosen automatically.
+  private async approveCreditPromptIfShown(): Promise<void> {
+    const option = flowLocators(this.page).alwaysApproveOption.first();
+    if (await option.isVisible().catch(() => false)) {
+      await option.click({ timeout: 3000 }).catch(() => undefined);
+    }
+  }
+
   private async waitForCurrentFlowVideo(before: number, timeoutMs: number): Promise<void> {
     const locators = flowLocators(this.page);
     const thumbnails = this.page.locator('img[alt="Generated video thumbnail"]');
@@ -328,6 +337,7 @@ export class FlowPage implements FlowAutomation {
     let sawBusyState = false;
 
     while (Date.now() < deadline) {
+      await this.approveCreditPromptIfShown();
       if (await locators.rateLimitMarker.first().isVisible().catch(() => false)) {
         throw new RateLimitedError("Flow displayed a rate limit or unusual activity message.");
       }
@@ -358,6 +368,7 @@ export class FlowPage implements FlowAutomation {
     const deadline = Date.now() + timeoutMs;
 
     while (Date.now() < deadline) {
+      await this.approveCreditPromptIfShown();
       if (await locators.rateLimitMarker.first().isVisible().catch(() => false)) {
         throw new RateLimitedError("Flow displayed a rate limit or unusual activity message.");
       }

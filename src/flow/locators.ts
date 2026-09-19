@@ -21,6 +21,10 @@ export function flowLocators(page: Page) {
     creditMarker: page.getByText(/run out of credits|insufficient credits|no credits left/i),
     blockedMarker: page.getByText(/can.?t help with|violates|content policy/i),
     failedMarker: page.getByText(/generation failed|couldn.?t generate|something went wrong/i),
+    // Flow Agent asks "Would you like me to kick off this N video generation, costing X credits?"
+    // and blocks until Approve / Always approve / Reject is chosen. Only the live prompt matches:
+    // an already-answered one is rendered read-only with aria-disabled="true".
+    alwaysApproveOption: page.locator('flow-permission-message [role="radio"][aria-label="Always approve"]:not([aria-disabled="true"])'),
     manualActionMarker: page.getByText(/verify your identity|sign in to continue|consent required/i),
     characterPrompt: page.locator('[role="textbox"][contenteditable="true"]'),
     characterCreateButton: page.locator("button").filter({ hasText: /arrow_forward/ }).filter({ hasText: /create/i }),

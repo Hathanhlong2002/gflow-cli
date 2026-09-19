@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Music Video từ một chủ đề</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #0f1115;
+    --panel: #161922;
+    --panel-border: #262b38;
+    --text: #e8eaf0;
+    --muted: #8b93a7;
+    --accent: #7c9bff;
+    --accent-strong: #5a78e6;
+    --ok: #4fd18b;
+    --warn: #f0b64c;
+    --err: #f26b6b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex;
+    justify-content: center;
+    padding: 32px 16px 80px;
+  }
+  main { width: 100%; max-width: 720px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  p.subtitle { color: var(--muted); margin: 0 0 28px; font-size: 14px; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 14px;
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  input[type="text"], input[type="number"] {
+    width: 100%;
+    background: #0d0f14;
+    border: 1px solid var(--panel-border);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 15px;
+  }
+  .row { display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; }
+  .row .grow { flex: 1; min-width: 220px; }
+  .row .fixed { width: 130px; }
+  button {
+    background: var(--accent);
+    color: #0b0d12;
+    border: none;
+    border-radius: 8px;
+    padding: 11px 18px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:hover { background: var(--accent-strong); }
+  button:disabled { background: #2c3040; color: var(--muted); cursor: not-allowed; }
+  button.secondary { background: transparent; border: 1px solid var(--panel-border); color: var(--text); }
+  #doctorBanner {
+    display: none;
+    font-size: 13px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    margin-bottom: 16px;
+  }
+  #doctorBanner.warn { display: block; background: rgba(240,182,76,0.12); border: 1px solid var(--warn); color: var(--warn); }
+  #progress { display: none; }
+  #progress.visible { display: block; }
+  .stage-line { font-size: 14px; margin-bottom: 10px; }
+  .stage-line .dot {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent); margin-right: 8px; animation: pulse 1.2s infinite ease-in-out;
+  }
+  .stage-line.done .dot { background: var(--ok); animation: none; }
+  .stage-line.error .dot { background: var(--err); animation: none; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+  #log {
+    background: #0a0c10; border-radius: 8px; padding: 10px 12px; font-size: 12px;
+    color: var(--muted); max-height: 160px; overflow-y: auto; white-space: pre-wrap;
+    font-family: ui-monospace, monospace; margin-top: 10px;
+  }
+  #videoWrap { display: none; }
+  #videoWrap.visible { display: block; }
+  video { width: 100%; border-radius: 10px; background: #000; }
+  .note { font-size: 12px; color: var(--muted); margin-top: 10px; line-height: 1.5; }
+  .actions { margin-top: 12px; display: flex; gap: 10px; }
+  h2.section { font-size: 14px; color: var(--muted); margin: 32px 0 10px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .past-item {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 12px; border: 1px solid var(--panel-border); border-radius: 8px; margin-bottom: 8px; font-size: 13px;
+  }
+  .past-item .topic { color: var(--text); }
+  .past-item .stage { color: var(--muted); font-size: 12px; }
+  .pill {
+    font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--panel-border); color: var(--muted);
+  }
+  .pill.ready { color: var(--ok); border-color: var(--ok); }
+  .pill.failed { color: var(--err); border-color: var(--err); }
+  a.link { color: var(--accent); text-decoration: none; font-size: 12px; }
+  a.pill { text-decoration: none; }
+  .pill.none { color: var(--muted); border-style: dashed; }
+  .pill.warn { color: var(--warn); border-color: var(--warn); }
+  .past-item .stage { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+  textarea, select {
+    width: 100%; background: #0d0f14; border: 1px solid var(--panel-border); color: var(--text);
+    border-radius: 8px; padding: 10px 12px; font-size: 14px; font-family: inherit;
+  }
+  textarea { resize: vertical; }
+  .field { margin-bottom: 14px; }
+  .acct {
+    display: flex; align-items: center; gap: 10px; padding: 10px 12px; margin-bottom: 8px;
+    border: 1px solid var(--panel-border); border-radius: 8px; font-size: 14px; flex-wrap: wrap;
+  }
+  .acct label { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--text); font-size: 14px; }
+  .acct .spacer { flex: 1; }
+  .acct .state { font-size: 12px; color: var(--muted); }
+  .acct .state.ok { color: var(--ok); }
+  .setup-hint { font-size: 12px; color: var(--warn); line-height: 1.6; width: 100%; word-break: break-all; }
+  #publishResult .result { font-size: 13px; padding: 8px 10px; border-radius: 8px; margin-top: 8px; border: 1px solid var(--panel-border); }
+  #publishResult .result.ok { border-color: var(--ok); color: var(--ok); }
+  #publishResult .result.fail { border-color: var(--err); color: var(--err); }
+  #publishCard { display: none; }
+  #publishCard.visible { display: block; }
+  .checkline { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); margin: 0; }
+  button.link-btn { background: transparent; border: none; color: var(--accent); padding: 0; font-size: 12px; font-weight: 500; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Tạo Music Video từ một chủ đề</h1>
+  <p class="subtitle">Nhập một chủ đề tiếng Việt — tool sẽ tự lập kế hoạch bài hát, tạo nhạc, tạo hình ảnh/video qua Flow và render thành 1 video hoàn chỉnh.</p>
+
+  <div id="doctorBanner" class="warn"></div>
+
+  <div class="card">
+    <div class="row">
+      <div class="grow">
+        <label for="topic">Chủ đề bài hát</label>
+        <input id="topic" type="text" placeholder="Ví dụ: Tình yêu tuổi học trò" maxlength="300" />
+      </div>
+      <div class="fixed">
+        <label for="duration">Độ dài (giây)</label>
+        <input id="duration" type="number" min="30" max="240" step="5" value="75" />
+      </div>
+      <button id="submitBtn">Tạo video</button>
+    </div>
+
+    <div id="progress">
+      <div class="stage-line" id="stageLine"><span class="dot"></span><span id="stageText">Đang bắt đầu…</span></div>
+      <div id="log"></div>
+    </div>
+
+    <div id="videoWrap">
+      <video id="video" controls></video>
+      <div class="actions">
+        <a class="link" id="downloadLink" href="#" download>Tải video xuống</a>
+        <button class="secondary" id="retryBtn" style="display:none">Thử lại (resume)</button>
+      </div>
+      <p class="note">
+        Lưu ý: Google Flow/Veo tự gắn một watermark nhỏ (hình tia sáng) ở góc video để đánh dấu nội dung do AI tạo ra.
+        Tool này không chỉnh sửa để xoá/che watermark đó, vì đó là cơ chế công khai nguồn gốc AI của Google, không phải giới hạn kỹ thuật.
+      </p>
+    </div>
+  </div>
+
+  <div class="card" id="publishCard">
+    <h2 style="font-size:16px;margin:0 0 14px">Đăng lên YouTube / TikTok</h2>
+    <div id="accounts"></div>
+    <div class="field"><label for="pubTitle">Tiêu đề (tự điền, có thể sửa)</label><input id="pubTitle" type="text" maxlength="100" /></div>
+    <div class="field"><label for="pubDesc">Mô tả</label><textarea id="pubDesc" rows="7" maxlength="5000"></textarea></div>
+    <div class="field"><label for="pubTags">Thẻ (cách nhau bằng dấu phẩy)</label><input id="pubTags" type="text" /></div>
+    <div class="row" style="margin-bottom:12px">
+      <div class="grow">
+        <label for="pubPrivacy">Chế độ hiển thị</label>
+        <select id="pubPrivacy">
+          <option value="private">Riêng tư</option>
+          <option value="unlisted">Không công khai (chỉ YouTube)</option>
+          <option value="public">Công khai</option>
+        </select>
+      </div>
+      <label class="checkline"><input type="checkbox" id="pubKids" /> Nội dung dành cho trẻ em</label>
+    </div>
+    <label class="checkline" style="margin-bottom:10px"><input type="checkbox" id="pubRepost" /> Cho phép đăng lại nền tảng đã đăng (tạo thêm bài thứ hai, có thể bị trùng)</label>
+    <p class="note">Video luôn được gắn nhãn nội dung do AI tạo (YouTube: nội dung tổng hợp, TikTok: AI-generated). Ứng dụng API chưa được YouTube/TikTok kiểm duyệt chỉ đăng được ở chế độ Riêng tư.</p>
+    <div class="actions"><button id="publishBtn">Đăng</button></div>
+    <div id="publishResult"></div>
+  </div>
+
+  <h2 class="section">Video đã tạo trước đây</h2>
+  <div class="row" style="margin-bottom:12px;align-items:center">
+    <div class="grow note" id="pastSummary" style="margin:0"></div>
+    <select id="pastFilter" style="width:auto">
+      <option value="all">Tất cả</option>
+      <option value="no-youtube">Chưa đăng YouTube</option>
+      <option value="no-tiktok">Chưa đăng TikTok</option>
+      <option value="done">Đã đăng đủ cả hai</option>
+    </select>
+  </div>
+  <div id="pastList"></div>
+</main>
+<script src="/app.js"></script>
+</body>
+</html>
