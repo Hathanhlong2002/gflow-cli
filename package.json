@@ -4,10 +4,13 @@
   "description": "Command-line tool that drives Google Flow in your own logged-in Chrome to generate images and videos.",
   "type": "module",
   "bin": {
-    "gflow": "./dist/src/index.js"
+    "gflow": "./dist/src/index.js",
+    "gflow-web": "./dist/src/web/server.js"
   },
   "files": [
-    "dist/src"
+    "dist/src",
+    "public",
+    ".env.example"
   ],
   "engines": {
     "node": ">=20.0.0"

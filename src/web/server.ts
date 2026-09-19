@@ -1,5 +1,6 @@
+#!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { createReadStream } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
 import { mkdir, readdir, readFile, stat } from "node:fs/promises";
 import http from "node:http";
 import { dirname, extname, join, resolve } from "node:path";
@@ -16,12 +17,37 @@ import type { PublishRecord } from "../publish/publisher.js";
 // Runs strictly on localhost — it drives a real logged-in Chrome via Playwright and
 // spends real Gemini/Lyria/Flow credit per run, so it must never be exposed off-box.
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = resolve(__dirname, "..", "..");
-const PUBLIC_DIR = resolve(__dirname, "..", "..", "public");
-const OUTPUT_ROOT = resolve(REPO_ROOT, "music-output");
+const MODULE_FILE = fileURLToPath(import.meta.url);
+const __dirname = dirname(MODULE_FILE);
+
+// Static assets and the CLI entry point ship inside the package; everything the user creates
+// (.env, tokens, browser profile, generated videos) lives in the directory they launch from,
+// matching where the gflow CLI itself keeps .gflow/.
+function findPackageRoot(start: string): string {
+  let current = start;
+  while (!existsSync(join(current, "package.json"))) {
+    const parent = dirname(current);
+    if (parent === current) throw new Error("Không tìm thấy package.json của tool");
+    current = parent;
+  }
+  return current;
+}
+
+const PACKAGE_ROOT = findPackageRoot(__dirname);
+const WORK_DIR = process.cwd();
+const PUBLIC_DIR = join(PACKAGE_ROOT, "public");
+const OUTPUT_ROOT = resolve(WORK_DIR, "music-output");
+const RUNNING_COMPILED = extname(MODULE_FILE) === ".js";
+
+// Compiled builds run the built CLI with the current Node; source checkouts use tsx.
+function cliCommand(cliArgs: string[]): { command: string; args: string[] } {
+  return RUNNING_COMPILED
+    ? { command: process.execPath, args: [join(PACKAGE_ROOT, "dist", "src", "index.js"), ...cliArgs] }
+    : { command: "npx", args: ["tsx", join(PACKAGE_ROOT, "src", "index.ts"), ...cliArgs] };
+}
+
 try {
-  process.loadEnvFile(resolve(REPO_ROOT, ".env"));
+  process.loadEnvFile(resolve(WORK_DIR, ".env"));
 } catch {
   // No .env file: GEMINI_API_KEY and the publishing credentials may come from the real environment.
 }
@@ -32,7 +58,7 @@ const ALLOWED_ORIGINS = new Set([`http://127.0.0.1:${PORT}`, `http://localhost:$
 const PROJECT_ID_PATTERN = /^[a-z0-9-]{1,60}$/;
 
 const publisher = new Publisher({
-  tokens: new TokenStore(resolve(REPO_ROOT, ".gflow", "publish-tokens.json")),
+  tokens: new TokenStore(resolve(WORK_DIR, ".gflow", "publish-tokens.json")),
   env: process.env
 });
 
@@ -156,8 +182,6 @@ function startRun(topic: string, duration: number, resumeIfExists: boolean, outD
   runs.set(id, run);
 
   const args = [
-    "tsx",
-    "src/index.ts",
     "music-video",
     "run",
     "--topic",
@@ -171,7 +195,8 @@ function startRun(topic: string, duration: number, resumeIfExists: boolean, outD
   ];
   if (resumeIfExists) args.push("--resume");
 
-  const child = spawn("npx", args, { cwd: REPO_ROOT, env: childEnvironment() });
+  const cli = cliCommand(args);
+  const child = spawn(cli.command, cli.args, { cwd: WORK_DIR, env: childEnvironment() });
   const appendLog = (chunk: Buffer): void => {
     const text = chunk.toString("utf8");
     for (const line of text.split(/\r?\n/)) {
@@ -285,7 +310,8 @@ async function listPastRuns(): Promise<PastRun[]> {
 
 function checkFlowLogin(): Promise<{ ready: boolean; message: string }> {
   return new Promise((resolvePromise) => {
-    const child = spawn("npx", ["tsx", "src/index.ts", "doctor"], { cwd: REPO_ROOT, env: childEnvironment() });
+    const cli = cliCommand(["doctor"]);
+    const child = spawn(cli.command, cli.args, { cwd: WORK_DIR, env: childEnvironment() });
     let out = "";
     child.stdout.on("data", (c) => (out += c.toString("utf8")));
     child.stderr.on("data", (c) => (out += c.toString("utf8")));
@@ -607,6 +633,7 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
 // and drive the user's logged-in browser, so it must not be reachable from the LAN.
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`Music video UI: http://localhost:${PORT}`);
+  console.log(`Thư mục dữ liệu (.env, music-output, .gflow): ${WORK_DIR}`);
   if (process.platform === "darwin") {
     spawn("open", [`http://localhost:${PORT}`], { stdio: "ignore" }).unref();
   }
