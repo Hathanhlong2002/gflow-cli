@@ -51,6 +51,9 @@ export interface CurrentFlowVideoDownloadInput {
 export async function downloadCurrentFlowVideo(input: CurrentFlowVideoDownloadInput): Promise<DownloadOutput> {
   await mkdir(input.outDir, { recursive: true });
   const button = input.page.getByRole("button", { name: "Download media" }).first();
+  if (!(await button.isVisible().catch(() => false))) {
+    await input.page.locator('img[alt="Generated video thumbnail"]').last().click();
+  }
   await button.waitFor({ state: "visible", timeout: 15000 });
   await button.click();
 
