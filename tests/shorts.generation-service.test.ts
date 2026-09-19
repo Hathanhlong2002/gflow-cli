@@ -56,6 +56,34 @@ describe("generateShortsProject", () => {
     expect(createHash("sha256").update(clip).digest("hex")).toBe(result.scenes[0].video?.sha256);
   });
 
+  it("generates and checkpoints every Flow video before requesting narration", async () => {
+    const harness = await createHarness();
+    let speechCalls = 0;
+    let flowCalls = 0;
+    const gemini: GeminiMediaTransport = {
+      async generateImage() {
+        throw new Error("Shorts generation must not request Gemini images");
+      },
+      async generateSpeech() {
+        speechCalls += 1;
+        throw new Error("Gemini TTS quota exhausted");
+      }
+    };
+    const sceneGenerator: SceneGenerator = {
+      async generate(input) {
+        flowCalls += 1;
+        return writeFlowArtifact(input.outDir, input.episodeIndex, input.sceneIndex);
+      }
+    };
+
+    await expect(generateShortsProject({ ...harness, gemini, sceneGenerator }))
+      .rejects.toThrow("Gemini TTS quota exhausted");
+
+    const checkpoint = await harness.journalStore.load();
+    expect([flowCalls, speechCalls]).toEqual([100, 1]);
+    expect(checkpoint.scenes.every((scene) => scene.video && !scene.narration)).toBe(true);
+  });
+
   it("pauses durably on quota and does not rotate accounts", async () => {
     const harness = await createHarness();
     let flowCalls = 0;
