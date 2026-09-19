@@ -212,6 +212,9 @@ function validateTimeline(storyboard: Storyboard): void {
   }
 }
 
+// Constant zoom applied to every Flow clip (matches the ~1.13-1.15x look the user asked for).
+const CLIP_ZOOM = 1.15;
+
 function fadeFilters(duration: number): string {
   const fadeDuration = Math.min(0.2, duration / 4);
   const fadeOutStart = Math.max(0, duration - fadeDuration);
@@ -264,11 +267,16 @@ export async function renderMusicVideo(input: RenderMusicVideoInput): Promise<Mu
       );
     } else {
       args.push("-i", resolve(sourcePath));
+      const zoomedWidth = Math.round((width * CLIP_ZOOM) / 2) * 2;
+      const zoomedHeight = Math.round((height * CLIP_ZOOM) / 2) * 2;
+      // Fixed zoom 1.15x pinned to the left edge (0-87% width, right 13% cropped out).
+      // Uses scale+crop instead of zoompan for optimal performance and zero jitter.
       filterParts.push(
-        `[${index}:v]scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
-        `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${fps},` +
-        `tpad=stop_mode=clone:stop_duration=${duration.toFixed(3)},trim=duration=${duration.toFixed(3)},` +
-        `setpts=PTS-STARTPTS,${fadeFilters(duration)}[v${index}]`
+        `[${index}:v]fps=${fps},` +
+        `tpad=stop_mode=clone:stop_duration=${duration.toFixed(3)},trim=duration=${duration.toFixed(3)},setpts=PTS-STARTPTS,` +
+        `scale=${zoomedWidth}:${zoomedHeight}:force_original_aspect_ratio=increase,` +
+        `crop=${width}:${height}:0:(ih-out_h)/2,` +
+        `setsar=1,setpts=PTS-STARTPTS,${fadeFilters(duration)}[v${index}]`
       );
     }
     concatLabels.push(`[v${index}]`);
