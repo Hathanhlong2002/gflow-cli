@@ -12,6 +12,44 @@ function inlineResponse(mimeType: string, bytes: Uint8Array, data = Buffer.from(
 }
 
 describe("Gemini media transport", () => {
+  it.each(["NO_IMAGE", "IMAGE_OTHER", "OTHER"])("explains an empty image result (%s) without treating it as malformed JSON", async (finishReason) => {
+    const fetcher: FetchLike = async () => new Response(JSON.stringify({
+      candidates: [{ finishReason, index: 0 }],
+      usageMetadata: { promptTokenCount: 20 }
+    }), { status: 200 });
+    const transport = new GoogleGeminiTransport({ apiKey: "secret", fetcher });
+
+    await expect(transport.generateImage({ model: "gemini-image", prompt: "scene", aspectRatio: "16:9" }))
+      .rejects.toMatchObject({ code: "MISSING_CONTENT", message: expect.stringContaining(finishReason) });
+  });
+
+  it("reports a blocked prompt without exposing provider text or retrying it", async () => {
+    let attempts = 0;
+    const fetcher: FetchLike = async () => {
+      attempts += 1;
+      return new Response(JSON.stringify({
+        promptFeedback: { blockReason: "SAFETY", blockReasonMessage: "secret provider text" }
+      }), { status: 200 });
+    };
+    const transport = new GoogleGeminiTransport({ apiKey: "secret", fetcher });
+    const error = await transport.generateImage({ model: "gemini-image", prompt: "scene", aspectRatio: "16:9" })
+      .catch((error: unknown) => error);
+
+    expect(error).toMatchObject({ code: "GENERATION_BLOCKED", message: expect.stringContaining("SAFETY") });
+    expect(String(error)).not.toContain("secret provider text");
+    expect(attempts).toBe(1);
+  });
+
+  it("reports image filtering when a candidate has no content", async () => {
+    const fetcher: FetchLike = async () => new Response(JSON.stringify({
+      candidates: [{ finishReason: "IMAGE_SAFETY", index: 0 }]
+    }), { status: 200 });
+    const transport = new GoogleGeminiTransport({ apiKey: "secret", fetcher });
+
+    await expect(transport.generateImage({ model: "gemini-image", prompt: "scene", aspectRatio: "16:9" }))
+      .rejects.toMatchObject({ code: "GENERATION_BLOCKED" });
+  });
+
   it("retries a rate-limited request using Retry-After before returning media", async () => {
     let attempts = 0;
     const fetcher: FetchLike = async () => {

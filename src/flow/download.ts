@@ -11,9 +11,9 @@ export function mediaIdFromSrc(src: string): string | undefined {
 }
 
 export function qualityMenuPattern(quality: DownloadQuality): RegExp {
-  if (quality === "2k") return /2K/i;
+  if (quality === "2k") return /2K|1080p/i;
   if (quality === "4k") return /4K/i;
-  return /original/i;
+  return /original|720p|gốc|g\u00f4\u0301c/i;
 }
 
 export function extensionFor(type: "image" | "video", contentType: string | undefined): string {
@@ -50,16 +50,21 @@ export interface CurrentFlowVideoDownloadInput {
 // Its Download media button opens a quality menu, so save through that first-party UI.
 export async function downloadCurrentFlowVideo(input: CurrentFlowVideoDownloadInput): Promise<DownloadOutput> {
   await mkdir(input.outDir, { recursive: true });
-  const button = input.page.getByRole("button", { name: "Download media" }).first();
+  const button = input.page.locator('button[aria-label="Download media"], button[aria-label="Tải nội dung nghe nhìn xuống"]').or(
+    input.page.getByRole("button", { name: /Download media|Tải nội dung nghe nhìn xuống/i })
+  ).first();
   if (!(await button.isVisible().catch(() => false))) {
-    await input.page.locator('img[alt="Generated video thumbnail"]').last().click();
+    await input.page.locator('img[alt="Generated video thumbnail"], img[alt*="video đã tạo"]').last().click();
   }
   await button.waitFor({ state: "visible", timeout: 15000 });
   await button.click();
+  await input.page.waitForTimeout(500);
 
   const pattern = qualityMenuPattern(input.quality);
-  const option = input.page.getByText(pattern).first();
-  await option.waitFor({ state: "visible", timeout: 10000 });
+  const option = input.page.getByText(pattern).or(
+    input.page.locator('[role=menuitem], div.mat-mdc-menu-item, button').filter({ hasText: pattern })
+  ).first();
+  await option.waitFor({ state: "visible", timeout: 15000 });
   if (input.quality !== "original" && /upgrade/i.test(await option.innerText())) {
     throw new ManualActionRequiredError("That download tier requires a Flow plan upgrade. Use original size or omit --upscale.");
   }

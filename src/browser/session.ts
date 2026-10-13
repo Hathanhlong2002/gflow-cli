@@ -295,21 +295,31 @@ export async function launchDebuggableChrome(profile: string, headed: boolean): 
 // enforced on untrusted devices. Automation later reattaches to this same profile with a
 // debugging port, by which point the session is signed in and never revisits the accounts
 // sign-in page. Returns the profile directory.
-export async function launchLoginChrome(profile: string): Promise<string> {
+export async function launchLoginChrome(profile: string, targetUrl: string = FLOW_URL): Promise<string> {
   const profileDir = resolveProfileDir(profile);
   await mkdir(profileDir, { recursive: true });
   // Clear any stale debug-port marker from a previous automation session so the next
   // automation command knows this plain window has no debugging port.
   await rm(join(profileDir, "DevToolsActivePort"), { force: true });
 
-  const args = [`--user-data-dir=${profileDir}`, "--no-first-run", "--no-default-browser-check", FLOW_URL];
+  const args = [`--user-data-dir=${profileDir}`, "--no-first-run", "--no-default-browser-check", targetUrl];
   const child = spawn(resolveChromeExecutable(), args, { detached: true, stdio: "ignore" });
   child.unref();
   return profileDir;
 }
 
-function pickFlowPage(context: BrowserContext): Page | undefined {
-  return context.pages().find((page) => page.url().includes("labs.google"));
+export function pickFlowPage(context: BrowserContext): Page | undefined {
+  return context.pages().find((page) => {
+    try {
+      const url = new URL(page.url());
+      return url.protocol === "https:" && (
+        url.hostname === "flow.google.com" ||
+        (url.hostname === "labs.google" && /^\/fx\/tools\/flow(?:\/|$)/.test(url.pathname))
+      );
+    } catch {
+      return false;
+    }
+  });
 }
 
 // Bundled-Chromium path, kept for local fixtures/tests (`--browser chromium`). Real Google

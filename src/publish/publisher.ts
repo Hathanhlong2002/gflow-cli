@@ -4,6 +4,7 @@ import { PLATFORMS, PublishError, createPkce, createState, writeJsonPrivate } fr
 import type { FetchFn, Pkce, Platform, Privacy, StoredToken, TokenStore } from "./common.js";
 import { tiktokCaption } from "./metadata.js";
 import type { VideoMetadata } from "./metadata.js";
+import { checkTiktokBrowserSession, uploadTiktokViaBrowser } from "./tiktok-browser.js";
 import { buildTiktokAuthUrl, ensureTiktokToken, exchangeTiktokCode, uploadTiktokVideo } from "./tiktok.js";
 import { buildYoutubeAuthUrl, ensureYoutubeToken, exchangeYoutubeCode, uploadYoutubeVideo } from "./youtube.js";
 
@@ -42,6 +43,17 @@ export interface PublishRequest {
 export interface PlatformStatus {
   configured: boolean;
   connected: boolean;
+  mode?: "api" | "browser";
+}
+
+export interface PublisherOptions {
+  tokens: TokenStore;
+  env: PublisherEnvironment;
+  fetcher?: FetchFn;
+  tiktokProfile?: string;
+  headed?: boolean;
+  tiktokBrowserUpload?: typeof uploadTiktokViaBrowser;
+  checkTiktokSession?: typeof checkTiktokBrowserSession;
 }
 
 interface PendingAuth {
@@ -59,13 +71,7 @@ export function redirectUriFor(platform: Platform, origin: string): string {
 export class Publisher {
   private readonly pending = new Map<string, PendingAuth>();
 
-  constructor(
-    private readonly options: {
-      tokens: TokenStore;
-      env: PublisherEnvironment;
-      fetcher?: FetchFn;
-    }
-  ) {}
+  constructor(private readonly options: PublisherOptions) {}
 
   private get fetcher(): FetchFn {
     return this.options.fetcher ?? fetch;
@@ -82,9 +88,22 @@ export class Publisher {
   }
 
   async status(): Promise<Record<Platform, PlatformStatus>> {
+    const hasTiktokApi = Boolean(this.tiktokConfig());
+    const hasTiktokToken = Boolean(await this.options.tokens.get("tiktok"));
+    const checkFn = this.options.checkTiktokSession ?? checkTiktokBrowserSession;
+    const browserSession = await checkFn(this.options.tiktokProfile).catch(() => ({ profileExists: false, loggedIn: false, profileDir: "" }));
+
     return {
-      youtube: { configured: Boolean(this.youtubeConfig()), connected: Boolean(await this.options.tokens.get("youtube")) },
-      tiktok: { configured: Boolean(this.tiktokConfig()), connected: Boolean(await this.options.tokens.get("tiktok")) }
+      youtube: {
+        configured: Boolean(this.youtubeConfig()),
+        connected: Boolean(await this.options.tokens.get("youtube")),
+        mode: "api"
+      },
+      tiktok: {
+        configured: hasTiktokApi || browserSession.profileExists,
+        connected: hasTiktokToken || browserSession.loggedIn,
+        mode: hasTiktokToken ? "api" : "browser"
+      }
     };
   }
 
@@ -200,18 +219,49 @@ export class Publisher {
           url: result.url
         };
       }
+
+      // Platform is TikTok
       const config = this.tiktokConfig();
       const stored = await this.options.tokens.get("tiktok");
-      if (!config || !stored) throw new PublishError("Chưa kết nối TikTok", "NOT_CONNECTED");
-      const token = await ensureTiktokToken(config, this.fetcher, stored);
-      if (token !== stored) await this.options.tokens.set("tiktok", token);
-      const result = await uploadTiktokVideo(this.fetcher, token.accessToken, {
-        filePath: videoPath,
+      if (config && stored) {
+        const token = await ensureTiktokToken(config, this.fetcher, stored);
+        if (token !== stored) await this.options.tokens.set("tiktok", token);
+        const result = await uploadTiktokVideo(this.fetcher, token.accessToken, {
+          filePath: videoPath,
+          caption: tiktokCaption(request.metadata),
+          privacy: request.privacy,
+          allowComments: true
+        });
+        return { ...base, status: "published", id: result.postId ?? result.publishId, ...(result.url ? { url: result.url } : {}) };
+      }
+
+      // Check if browser session is logged in or custom uploader is injected
+      const checkFn = this.options.checkTiktokSession ?? checkTiktokBrowserSession;
+      const browserSession = await checkFn(this.options.tiktokProfile).catch(() => ({ profileExists: false, loggedIn: false, profileDir: "" }));
+
+      if (!browserSession.loggedIn && !this.options.tiktokBrowserUpload) {
+        throw new PublishError("Chưa kết nối TikTok", "NOT_CONNECTED");
+      }
+
+      const uploadFn = this.options.tiktokBrowserUpload ?? uploadTiktokViaBrowser;
+      const result = await uploadFn({
+        videoPath,
         caption: tiktokCaption(request.metadata),
         privacy: request.privacy,
-        allowComments: true
+        profile: this.options.tiktokProfile ?? "tiktok",
+        headed: this.options.headed ?? true
       });
-      return { ...base, status: "published", id: result.postId ?? result.publishId, ...(result.url ? { url: result.url } : {}) };
+
+      if (result.status === "failed") {
+        throw new PublishError(result.error || "Tải video lên TikTok thất bại", "UPLOAD_FAILED");
+      }
+
+      return {
+        ...base,
+        status: "published",
+        id: result.id,
+        url: result.url ?? "https://www.tiktok.com/tiktokstudio/content"
+      };
     } catch (error) {
       return { ...base, status: "failed", error: error instanceof Error ? error.message : "Lỗi không xác định" };
     }

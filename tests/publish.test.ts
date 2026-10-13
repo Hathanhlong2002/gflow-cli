@@ -366,4 +366,41 @@ describe("Publisher", () => {
     expect(youtube).toMatchObject({ status: "failed", error: "Chưa kết nối YouTube" });
     await expect(publisher.publish({ ...request(join(root, "missing")), platforms: ["youtube"] })).rejects.toThrow(/video hoàn chỉnh/);
   });
+
+  it("supports publishing to TikTok via browser automation when API keys are absent", async () => {
+    const { tokens, project } = await setup(async () => json({}));
+    const mockUpload = async (options: { caption: string; videoPath: string }) => ({
+      status: "published" as const,
+      caption: options.caption,
+      videoPath: options.videoPath,
+      at: new Date().toISOString(),
+      id: "tiktok-post-123",
+      url: "https://www.tiktok.com/@user/video/123"
+    });
+    const mockCheck = async () => ({ profileExists: true, loggedIn: true, profileDir: "/tmp/tt" });
+
+    const publisher = new Publisher({
+      tokens,
+      env: {},
+      tiktokBrowserUpload: mockUpload as any,
+      checkTiktokSession: mockCheck as any
+    });
+
+    const status = await publisher.status();
+    expect(status.tiktok).toEqual({ configured: true, connected: true, mode: "browser" });
+
+    const records = await publisher.publish({
+      ...request(project),
+      platforms: ["tiktok"]
+    });
+
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      platform: "tiktok",
+      status: "published",
+      id: "tiktok-post-123",
+      url: "https://www.tiktok.com/@user/video/123"
+    });
+  });
 });
+

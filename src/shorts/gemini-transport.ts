@@ -35,6 +35,43 @@ const geminiEnvelopeSchema = z
   })
   .passthrough();
 
+// A valid HTTP 200 can report filtering or an empty generation without content.parts.
+// Read only documented status codes; provider messages can contain sensitive input.
+const geminiStatusSchema = z.object({
+  promptFeedback: z.object({ blockReason: z.string().optional() }).passthrough().optional(),
+  candidates: z.array(z.object({
+    finishReason: z.string().optional(),
+    content: z.object({ parts: z.array(z.unknown()).optional() }).passthrough().optional()
+  }).passthrough()).optional()
+}).passthrough();
+const BLOCKED_REASONS = new Set([
+  "SAFETY", "BLOCKLIST", "PROHIBITED_CONTENT", "RECITATION", "SPII",
+  "IMAGE_SAFETY", "IMAGE_PROHIBITED_CONTENT", "IMAGE_RECITATION"
+]);
+const EMPTY_REASONS = new Set(["NO_IMAGE", "IMAGE_OTHER", "OTHER", "MAX_TOKENS", "STOP"]);
+
+function assertGeneratedContent(value: unknown): void {
+  const status = geminiStatusSchema.safeParse(value);
+  if (!status.success) return; // The full envelope validator reports malformed responses.
+  const blocked = status.data.promptFeedback?.blockReason;
+  if (blocked) {
+    const reason = BLOCKED_REASONS.has(blocked) ? blocked : "BLOCKED";
+    throw new GeminiTransportError(`Gemini blocked this generation (${reason})`, "GENERATION_BLOCKED");
+  }
+  const candidates = status.data.candidates ?? [];
+  if (candidates.some((candidate) => (candidate.content?.parts?.length ?? 0) > 0)) return;
+  for (const candidate of candidates) {
+    const reason = candidate.finishReason;
+    if (reason && BLOCKED_REASONS.has(reason)) {
+      throw new GeminiTransportError(`Gemini blocked this generation (${reason})`, "GENERATION_BLOCKED");
+    }
+  }
+  const empty = candidates.find((candidate) => candidate.finishReason && EMPTY_REASONS.has(candidate.finishReason));
+  if (empty) {
+    throw new GeminiTransportError(`Gemini did not return generated content (${empty.finishReason}). Retry this stage to keep completed assets.`, "MISSING_CONTENT");
+  }
+}
+
 export interface GeminiJsonRequest {
   model: string;
   systemInstruction: string;
@@ -202,7 +239,9 @@ export class GoogleGeminiTransport implements GeminiTransport, GeminiMediaTransp
     if (!response?.ok) throw new GeminiTransportError("Gemini request failed", "REQUEST_FAILED");
     const responseText = await readLimitedBody(response, maximumBytes);
     try {
-      return geminiEnvelopeSchema.parse(JSON.parse(responseText) as unknown);
+      const value: unknown = JSON.parse(responseText);
+      assertGeneratedContent(value);
+      return geminiEnvelopeSchema.parse(value);
     } catch (error) {
       if (error instanceof GeminiTransportError) throw error;
       throw new GeminiTransportError("Gemini returned an invalid response envelope", "INVALID_RESPONSE");

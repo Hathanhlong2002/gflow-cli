@@ -423,6 +423,14 @@ CI (lint + build + test on Node 20 & 22) runs on every push and pull request.
 
 ## Flow Shorts Factory: plan and generate
 
+### Local web interface
+
+Run `npm run web` and open `http://127.0.0.1:4173`. In **Tài khoản Google Flow**,
+click **Đăng nhập Google Flow**, sign in in the Chrome window opened by the tool,
+then click **Đã đăng nhập — Kiểm tra lại**. The web workflow uses the `default`
+browser profile. Background status checks leave the sign-in window open until you
+explicitly verify it. Login and verification are unavailable while a video is running.
+
 ### One-command 16:9 music video
 
 `gflow music-video run` turns one topic into an original vocal song and a finished approximately

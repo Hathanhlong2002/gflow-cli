@@ -18,6 +18,7 @@ import { runJobs } from "./jobs/runner.js";
 import { resolveOutputDir } from "./config/paths.js";
 import { registerShortsCommands, type ShortsCommandDependencies } from "./shorts/commands.js";
 import { mergeClips } from "./shorts/renderer.js";
+import { checkTiktokBrowserSession, uploadTiktokViaBrowser } from "./publish/tiktok-browser.js";
 
 export interface CreateProgramOptions extends ShortsCommandDependencies, MusicVideoCommandDependencies {
   automation?: FlowAutomation;
@@ -159,6 +160,53 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       const profileDir = await launchLoginChrome(command.profile);
       console.log(`Opened Google Chrome for login with profile: ${profileDir}`);
       console.log("Complete login in that window, then run `gflow doctor` (gflow reopens Chrome for automation).");
+    });
+
+  const tiktok = program.command("tiktok").description("Manage TikTok account and direct uploads.");
+
+  tiktok
+    .command("login")
+    .description("Open Chrome to sign in to TikTok once (saves session to profile).")
+    .option("--profile <name>", "browser profile name", "tiktok")
+    .action(async (command: { profile: string }) => {
+      const profileDir = await launchLoginChrome(command.profile, "https://www.tiktok.com/login");
+      console.log(`Đã mở Google Chrome cho TikTok với profile: ${profileDir}`);
+      console.log("Hãy hoàn tất đăng nhập tài khoản TikTok trong cửa sổ đó.");
+      console.log("Phiên đăng nhập sẽ được lưu lại để tự động tải video lên.");
+    });
+
+  tiktok
+    .command("check")
+    .description("Check if TikTok browser profile is currently logged in.")
+    .option("--profile <name>", "browser profile name", "tiktok")
+    .action(async (command: { profile: string }) => {
+      const res = await checkTiktokBrowserSession(command.profile);
+      if (res.loggedIn) {
+        console.log(`[TikTok] Profile "${command.profile}" ĐÃ ĐĂNG NHẬP.`);
+      } else {
+        console.log(`[TikTok] Profile "${command.profile}" CHƯA ĐĂNG NHẬP. Chạy: gflow tiktok login --profile ${command.profile}`);
+      }
+    });
+
+  tiktok
+    .command("upload")
+    .description("Upload an MP4 video directly to TikTok via browser automation.")
+    .requiredOption("--video <path>", "path to MP4 video file")
+    .option("--caption <text>", "video caption and hashtags", "Video tạo bằng AI #nhacAI #tiktok")
+    .option("--privacy <level>", "privacy level: public or private", "public")
+    .option("--profile <name>", "browser profile name", "tiktok")
+    .option("--browser <name>", "browser channel: chrome or chromium", parseBrowserOption, DEFAULT_BROWSER_CHANNEL)
+    .option("--headed", "show browser", true)
+    .option("--no-headed", "run browser headless")
+    .action(async (command: { video: string; caption: string; privacy: string; profile: string; headed: boolean; browser: BrowserChannel }) => {
+      await uploadTiktokViaBrowser({
+        videoPath: resolve(process.cwd(), command.video),
+        caption: command.caption,
+        privacy: command.privacy === "private" ? "private" : "public",
+        profile: command.profile,
+        headed: command.headed,
+        browser: command.browser
+      });
     });
 
   program

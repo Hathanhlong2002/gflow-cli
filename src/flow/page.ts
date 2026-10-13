@@ -88,7 +88,7 @@ export class FlowPage implements FlowAutomation {
       throw new GenerationFailedError("The current Flow editor supports one video output per job.");
     }
     const beforeCurrentFlowVideos = currentFlowVideoEditor
-      ? await this.page.locator('img[alt="Generated video thumbnail"]').count()
+      ? await this.page.locator('img[alt="Generated video thumbnail"], img[alt*="video đã tạo"]').count()
       : 0;
     const before = new Set(await this.resultSrcs(input.job.type));
     await this.fillPrompt(input.job.prompt);
@@ -331,8 +331,8 @@ export class FlowPage implements FlowAutomation {
 
   private async waitForCurrentFlowVideo(before: number, timeoutMs: number): Promise<void> {
     const locators = flowLocators(this.page);
-    const thumbnails = this.page.locator('img[alt="Generated video thumbnail"]');
-    const startButton = this.page.locator('button[aria-label="Start generation"]').first();
+    const thumbnails = this.page.locator('img[alt="Generated video thumbnail"], img[alt*="video đã tạo"]');
+    const startButton = locators.submitButton.first();
     const deadline = Date.now() + timeoutMs;
     let sawBusyState = false;
 

@@ -10,27 +10,52 @@ const video = document.getElementById("video");
 const downloadLink = document.getElementById("downloadLink");
 const retryBtn = document.getElementById("retryBtn");
 const doctorBanner = document.getElementById("doctorBanner");
+const flowStatus = document.getElementById("flowStatus");
+const flowLoginBtn = document.getElementById("flowLoginBtn");
+const flowCheckBtn = document.getElementById("flowCheckBtn");
 const pastList = document.getElementById("pastList");
 
 let currentSource = null;
 let currentProjectId = null;
 
-async function checkDoctor() {
+function renderFlowStatus(data) {
+  flowStatus.classList.toggle("ready", data.ready === true);
+  flowStatus.textContent = data.ready ? "Đã kết nối Google Flow" : data.loginPending ? "Đang chờ bạn đăng nhập Google" : "Google Flow chưa sẵn sàng";
+  flowCheckBtn.textContent = data.loginPending ? "Đã đăng nhập — Kiểm tra lại" : "Kiểm tra lại";
+  doctorBanner.classList.toggle("warn", !data.ready);
+  doctorBanner.textContent = data.ready ? "" : data.message || "Chưa xác minh được kết nối. Hãy đăng nhập rồi kiểm tra lại.";
+}
+
+async function checkDoctor(verifyLogin = false) {
+  flowLoginBtn.disabled = true;
+  flowCheckBtn.disabled = true;
+  flowStatus.textContent = "Đang kiểm tra Google Flow…";
   try {
-    const res = await fetch("/api/doctor");
-    const data = await res.json();
-    if (!data.ready) {
-      doctorBanner.classList.add("warn");
-      doctorBanner.textContent =
-        "Chưa đăng nhập Google Flow trong Chrome tự động hoá. Mở terminal, chạy: npx tsx src/index.ts auth login rồi đăng nhập, sau đó quay lại đây.";
-    } else {
-      doctorBanner.classList.remove("warn");
-      doctorBanner.textContent = "";
-    }
-  } catch {
-    // Server chưa sẵn sàng trả doctor — bỏ qua, không chặn UI.
+    renderFlowStatus(await api(verifyLogin ? "/api/flow/check" : "/api/doctor", verifyLogin ? { method: "POST", body: {} } : undefined));
+  } catch (error) {
+    renderFlowStatus({ ready: false, message: error.message || "Không kiểm tra được Google Flow. Hãy thử lại." });
+  } finally {
+    flowLoginBtn.disabled = false;
+    flowCheckBtn.disabled = false;
   }
 }
+
+flowLoginBtn.addEventListener("click", async () => {
+  flowLoginBtn.disabled = true;
+  flowCheckBtn.disabled = true;
+  flowStatus.classList.remove("ready");
+  flowStatus.textContent = "Đang mở Chrome để đăng nhập…";
+  try {
+    renderFlowStatus(await api("/api/flow/login", { method: "POST", body: {} }));
+  } catch (error) {
+    renderFlowStatus({ ready: false, message: error.message || "Không mở được cửa sổ đăng nhập Google." });
+  } finally {
+    flowLoginBtn.disabled = false;
+    flowCheckBtn.disabled = false;
+  }
+});
+
+flowCheckBtn.addEventListener("click", () => checkDoctor(true));
 
 function renderStage(status, stageLabel, message) {
   progressBox.classList.add("visible");
@@ -94,10 +119,11 @@ async function submitTopic(topic, duration) {
   stageLine.classList.remove("done", "error");
   stageText.textContent = "Đang bắt đầu…";
 
+  const autoPublish = document.getElementById("autoPublishTiktok")?.checked ?? false;
   const res = await fetch("/api/runs", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ topic, duration })
+    body: JSON.stringify({ topic, duration, autoPublishTiktok: autoPublish })
   });
   const data = await res.json();
   if (!res.ok) {
@@ -263,6 +289,26 @@ function publishedFor(platform) {
   return publishedRecords.findLast((record) => record.platform === platform && record.status === "published");
 }
 
+async function loginTiktokBrowser() {
+  try {
+    showPublishMessage("Đang mở trình duyệt Google Chrome để đăng nhập TikTok...", true);
+    await api("/api/publish/tiktok/login", { method: "POST" });
+    showPublishMessage("Đã mở Google Chrome. Hãy hoàn tất đăng nhập tài khoản TikTok trong cửa sổ đó!", true);
+
+    for (let i = 0; i < 60; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      const res = await api("/api/publish/tiktok/check").catch(() => null);
+      if (res && res.loggedIn) {
+        showPublishMessage("Đã kết nối tài khoản TikTok thành công!", true);
+        await refreshPublishStatus();
+        return;
+      }
+    }
+  } catch (error) {
+    showPublishMessage(`Lỗi kết nối TikTok: ${error.message}`, false);
+  }
+}
+
 function renderAccounts() {
   accountsBox.innerHTML = "";
   for (const platform of ["youtube", "tiktok"]) {
@@ -282,7 +328,15 @@ function renderAccounts() {
 
     const state = document.createElement("span");
     state.className = "state" + (info.connected ? " ok" : "");
-    state.textContent = done ? "Đã đăng" : info.connected ? "Đã kết nối" : info.configured ? "Chưa kết nối" : "Chưa cấu hình";
+    if (done) {
+      state.textContent = "Đã đăng";
+    } else if (info.connected) {
+      state.textContent = info.mode === "browser" ? "Đã kết nối (Trình duyệt)" : "Đã kết nối (API)";
+    } else if (platform === "tiktok") {
+      state.textContent = "Chưa kết nối";
+    } else {
+      state.textContent = info.configured ? "Chưa kết nối" : "Chưa cấu hình";
+    }
 
     const spacer = document.createElement("span");
     spacer.className = "spacer";
@@ -300,15 +354,26 @@ function renderAccounts() {
 
     const action = document.createElement("button");
     action.className = "secondary";
-    action.textContent = info.connected ? "Ngắt kết nối" : "Kết nối";
-    action.disabled = !info.configured && !info.connected;
-    action.addEventListener("click", () => (info.connected ? disconnect(platform) : connect(platform)));
+    if (platform === "tiktok") {
+      action.textContent = info.connected ? "Đăng nhập lại" : "Đăng nhập TikTok (Chrome)";
+      action.disabled = false;
+      action.addEventListener("click", () => loginTiktokBrowser());
+    } else {
+      action.textContent = info.connected ? "Ngắt kết nối" : "Kết nối Google";
+      action.disabled = !info.configured && !info.connected;
+      action.addEventListener("click", () => (info.connected ? disconnect(platform) : connect(platform)));
+    }
     row.append(action);
 
-    if (!info.configured && !info.connected) {
+    if (platform === "youtube" && !info.configured && !info.connected) {
       const hint = document.createElement("div");
       hint.className = "setup-hint";
       hint.textContent = `Cần thêm vào file .env: ${SETUP_ENV[platform]}. Redirect URI cần đăng ký: ${publishStatus.redirectUris[platform]}`;
+      row.append(hint);
+    } else if (platform === "tiktok" && !info.connected) {
+      const hint = document.createElement("div");
+      hint.className = "setup-hint";
+      hint.textContent = "Đăng nhập 1 lần trên Google Chrome. Tool sẽ tự động nạp video, điền caption, hashtag và đăng bài thay bạn.";
       row.append(hint);
     }
     accountsBox.append(row);
@@ -340,6 +405,7 @@ async function disconnect(platform) {
   await api("/api/publish/disconnect", { method: "POST", body: { platform } });
   await refreshPublishStatus();
 }
+
 
 function showPublishMessage(text, ok) {
   const div = document.createElement("div");

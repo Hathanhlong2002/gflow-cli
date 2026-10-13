@@ -1,6 +1,7 @@
 import { mkdtemp, symlink, writeFile, lstat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { BrowserContext, Page } from "playwright";
 import { describe, expect, it } from "vitest";
 import {
   buildBrowserLaunchOptions,
@@ -10,8 +11,26 @@ import {
   hiddenWindowArgs,
   isSingletonLockError,
   messageForBrowserLaunchError,
+  pickFlowPage,
   resolveChromeExecutable
 } from "../src/browser/session.js";
+
+describe("pickFlowPage", () => {
+  it("selects the current Flow tab instead of an unrelated tab", () => {
+    const other = { url: () => "https://getadblock.com/en/installed/" } as Page;
+    const flow = { url: () => "https://flow.google.com/project/example" } as Page;
+    const context = { pages: () => [other, flow] } as BrowserContext;
+    expect(pickFlowPage(context)).toBe(flow);
+  });
+
+  it("accepts the legacy Flow URL without matching unrelated Labs pages or lookalike domains", () => {
+    const other = { url: () => "https://labs.google/fx/tools/whisk" } as Page;
+    const fake = { url: () => "https://flow.google.com.example.org/" } as Page;
+    const legacy = { url: () => "https://labs.google/fx/tools/flow/project/example" } as Page;
+    const context = { pages: () => [other, fake, legacy] } as BrowserContext;
+    expect(pickFlowPage(context)).toBe(legacy);
+  });
+});
 
 // lstat (not access) so we test for the symlink itself, not its dangling target.
 async function exists(path: string): Promise<boolean> {

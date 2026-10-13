@@ -72,6 +72,12 @@
     margin-bottom: 16px;
   }
   #doctorBanner.warn { display: block; background: rgba(240,182,76,0.12); border: 1px solid var(--warn); color: var(--warn); }
+  #flowHeading { font-size: 16px; margin: 0 0 6px; }
+  #flowStatus { font-size: 13px; color: var(--muted); margin: 0; }
+  #flowStatus.ready { color: var(--ok); }
+  .flow-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+  #doctorBanner { margin: 12px 0 0; overflow-wrap: anywhere; }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
   #progress { display: none; }
   #progress.visible { display: block; }
   .stage-line { font-size: 14px; margin-bottom: 10px; }
@@ -138,7 +144,16 @@
   <h1>Tạo Music Video từ một chủ đề</h1>
   <p class="subtitle">Nhập một chủ đề tiếng Việt — tool sẽ tự lập kế hoạch bài hát, tạo nhạc, tạo hình ảnh/video qua Flow và render thành 1 video hoàn chỉnh.</p>
 
-  <div id="doctorBanner" class="warn"></div>
+  <section class="card" aria-labelledby="flowHeading">
+    <h2 id="flowHeading">Tài khoản Google Flow</h2>
+    <p id="flowStatus" role="status" aria-live="polite">Đang kiểm tra kết nối…</p>
+    <div class="flow-actions">
+      <button id="flowLoginBtn" type="button">Đăng nhập Google Flow</button>
+      <button id="flowCheckBtn" type="button" class="secondary">Kiểm tra lại</button>
+    </div>
+    <p class="note">Đăng nhập trong cửa sổ Chrome của tool, rồi quay lại đây kiểm tra kết nối. Tài khoản này dùng để tạo video trên Google Flow.</p>
+    <div id="doctorBanner" role="status"></div>
+  </section>
 
   <div class="card">
     <div class="row">
@@ -152,6 +167,10 @@
       </div>
       <button id="submitBtn">Tạo video</button>
     </div>
+    <label class="checkline" style="margin-top:10px">
+      <input type="checkbox" id="autoPublishTiktok" checked />
+      Tự động đăng lên TikTok khi tạo xong video (yêu cầu đã đăng nhập TikTok)
+    </label>
 
     <div id="progress">
       <div class="stage-line" id="stageLine"><span class="dot"></span><span id="stageText">Đang bắt đầu…</span></div>

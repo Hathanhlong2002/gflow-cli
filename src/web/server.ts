@@ -11,6 +11,9 @@ import { buildMetadata, loadMetadataPlan } from "../publish/metadata.js";
 import type { VideoMetadata } from "../publish/metadata.js";
 import { Publisher } from "../publish/publisher.js";
 import type { PublishRecord } from "../publish/publisher.js";
+import { clearStaleSingletonLock, closeChromeForProfile, launchLoginChrome } from "../browser/session.js";
+import { checkTiktokBrowserSession, launchTiktokLogin } from "../publish/tiktok-browser.js";
+import { FlowAccount, FlowAccountError } from "./flow-account.js";
 
 // Local web UI for the music-video pipeline: one topic in, one rendered video out.
 // Runs strictly on localhost — it drives a real logged-in Chrome via Playwright and
@@ -33,7 +36,9 @@ const PROJECT_ID_PATTERN = /^[a-z0-9-]{1,60}$/;
 
 const publisher = new Publisher({
   tokens: new TokenStore(resolve(REPO_ROOT, ".gflow", "publish-tokens.json")),
-  env: process.env
+  env: process.env,
+  tiktokProfile: "tiktok",
+  headed: true
 });
 
 const MIN_DURATION = 30;
@@ -58,6 +63,17 @@ interface RunState {
 const runs = new Map<string, RunState>();
 // Project id -> platforms with an upload in flight, so the list can show "đang đăng" and a second click can't double-post.
 const publishing = new Map<string, Platform[]>();
+const flowAccount = new FlowAccount({
+  isBusy: () => [...runs.values()].some((run) => run.status === "running"),
+  check: checkFlowLogin,
+  openLogin: async () => {
+    const profileDir = resolve(REPO_ROOT, ".gflow", "profiles", "default");
+    // Sign-in must use plain Chrome. Stop only this tool's profile before relaunching it.
+    await closeChromeForProfile(profileDir);
+    await clearStaleSingletonLock(profileDir);
+    await launchLoginChrome("default");
+  }
+});
 
 function slugify(topic: string): string {
   const ascii = topic
@@ -142,7 +158,7 @@ async function pollProgress(run: RunState): Promise<void> {
   }
 }
 
-function startRun(topic: string, duration: number, resumeIfExists: boolean, outDir: string, id: string): RunState {
+function startRun(topic: string, duration: number, resumeIfExists: boolean, outDir: string, id: string, autoPublishTiktok: boolean = false): RunState {
   const run: RunState = {
     id,
     topic,
@@ -170,6 +186,7 @@ function startRun(topic: string, duration: number, resumeIfExists: boolean, outD
     "vi-VN"
   ];
   if (resumeIfExists) args.push("--resume");
+  if (autoPublishTiktok) args.push("--publish-tiktok");
 
   const child = spawn("npx", args, { cwd: REPO_ROOT, env: childEnvironment() });
   const appendLog = (chunk: Buffer): void => {
@@ -285,12 +302,14 @@ async function listPastRuns(): Promise<PastRun[]> {
 
 function checkFlowLogin(): Promise<{ ready: boolean; message: string }> {
   return new Promise((resolvePromise) => {
-    const child = spawn("npx", ["tsx", "src/index.ts", "doctor"], { cwd: REPO_ROOT, env: childEnvironment() });
+    const child = spawn(process.execPath, ["--import", "tsx", "src/index.ts", "doctor", "--profile", "default"], {
+      cwd: REPO_ROOT, env: childEnvironment(), timeout: 60_000
+    });
     let out = "";
     child.stdout.on("data", (c) => (out += c.toString("utf8")));
     child.stderr.on("data", (c) => (out += c.toString("utf8")));
-    child.on("exit", (code) => {
-      resolvePromise({ ready: code === 0, message: out.trim() });
+    child.on("close", (code, signal) => {
+      resolvePromise({ ready: code === 0, message: signal ? "Kiểm tra Google Flow quá lâu. Hãy kiểm tra cửa sổ Chrome rồi thử lại." : out.trim() });
     });
     child.on("error", () => resolvePromise({ ready: false, message: "Không chạy được lệnh doctor" }));
   });
@@ -419,6 +438,18 @@ async function publishRoutes(req: http.IncomingMessage, res: http.ServerResponse
     return true;
   }
 
+  if (req.method === "POST" && pathname === "/api/publish/tiktok/login") {
+    const profileDir = await launchTiktokLogin("tiktok");
+    sendJson(res, 200, { ok: true, profileDir });
+    return true;
+  }
+
+  if (req.method === "GET" && pathname === "/api/publish/tiktok/check") {
+    const session = await checkTiktokBrowserSession("tiktok");
+    sendJson(res, 200, session);
+    return true;
+  }
+
   const callback = /^\/oauth\/(youtube|tiktok)\/callback\/?$/.exec(pathname);
   if (req.method === "GET" && callback) {
     const platform = callback[1] as Platform;
@@ -497,6 +528,10 @@ const server = http.createServer((req, res) => {
       res.end();
       return;
     }
+    if (error instanceof FlowAccountError) {
+      sendJson(res, error.status, { error: error.message, code: error.code });
+      return;
+    }
     if (error instanceof PublishError) {
       const clientError = ["BAD_REQUEST", "NOT_CONFIGURED", "NOT_CONNECTED", "NO_VIDEO", "NO_PLATFORM", "NO_PLAN", "BODY_TOO_LARGE"].includes(error.code);
       sendJson(res, clientError ? 400 : 502, { error: error.message, code: error.code });
@@ -532,7 +567,19 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
   if (await publishRoutes(req, res, url)) return;
 
   if (req.method === "GET" && pathname === "/api/doctor") {
-    sendJson(res, 200, await checkFlowLogin());
+    sendJson(res, 200, await flowAccount.check());
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/api/flow/login") {
+    await readRequestBody(req);
+    sendJson(res, 200, await flowAccount.login());
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/api/flow/check") {
+    await readRequestBody(req);
+    sendJson(res, 200, await flowAccount.check(true));
     return;
   }
 
@@ -542,7 +589,11 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
   }
 
   if (req.method === "POST" && pathname === "/api/runs") {
-    const body = (await readRequestBody(req)) as { topic?: string; duration?: number };
+    if (flowAccount.loginPending) {
+      sendJson(res, 409, { error: "Hãy hoàn tất đăng nhập Google Flow và bấm Kiểm tra lại trước khi tạo video.", code: "FLOW_LOGIN_PENDING" });
+      return;
+    }
+    const body = (await readRequestBody(req)) as { topic?: string; duration?: number; autoPublishTiktok?: boolean };
     const topic = String(body.topic ?? "").trim();
     if (topic.length < 3 || topic.length > 300) {
       sendJson(res, 400, { error: "Chủ đề phải từ 3 đến 300 ký tự" });
@@ -568,7 +619,7 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     }
 
     await mkdir(outDir, { recursive: true });
-    startRun(topic, duration, Boolean(existingProject), outDir, id);
+    startRun(topic, duration, Boolean(existingProject), outDir, id, body.autoPublishTiktok === true);
     sendJson(res, 200, { id });
     return;
   }
