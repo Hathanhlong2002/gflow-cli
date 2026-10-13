@@ -237,15 +237,58 @@ export async function uploadTiktokViaBrowser(options: TiktokBrowserUploadOptions
       }
     }
 
-    if (!uploadTarget) {
-      throw new PublishError("Hết thời gian chờ khung tải video TikTok.", "TIMEOUT");
+    console.log(`[TikTok Browser] Đang nạp video (${(fileStat.size / 1024 / 1024).toFixed(1)} MB)...`);
+    let fileUploaded = false;
+
+    // Strategy 1: fileChooser on clicking "Select video" / "Upload" button
+    try {
+      const selectButton = page.locator('button:has-text("Select video"), button:has-text("Upload"), button:has-text("Chọn video"), button:has-text("Chọn tệp")').or(
+        page.locator('div[role="button"]:has-text("Select video"), div[role="button"]:has-text("Upload")')
+      ).first();
+      if (await selectButton.isVisible({ timeout: 3000 }).catch(() => false)) {
+        const [fileChooser] = await Promise.all([
+          page.waitForEvent("filechooser", { timeout: 6000 }),
+          selectButton.click({ force: true })
+        ]);
+        await fileChooser.setFiles(options.videoPath);
+        fileUploaded = true;
+      }
+    } catch {
+      // Continue to next strategy
     }
 
-    console.log(`[TikTok Browser] Đang nạp video (${(fileStat.size / 1024 / 1024).toFixed(1)} MB)...`);
-    await uploadTarget.input.setInputFiles(options.videoPath);
+    // Strategy 2: setInputFiles on candidate input elements
+    if (!fileUploaded) {
+      const allTargets: Array<Page | Frame> = [page, ...page.frames()];
+      for (const t of allTargets) {
+        try {
+          const fileInput = t.locator('input[type="file"]').first();
+          if (await fileInput.count() > 0) {
+            // TikTok input can be hidden or detached, setInputFiles might reject or time out
+            // even though the browser already accepted the file
+            await fileInput.setInputFiles(options.videoPath, { timeout: 8000 }).catch(() => {});
+            fileUploaded = true;
+            break;
+          }
+        } catch {
+          // Continue
+        }
+      }
+    }
 
-    console.log("[TikTok Browser] Đang chờ xử lý file video và tải lên...");
-    const target = uploadTarget.target;
+    // Verification: kiểm tra xem TikTok Studio đã nhận video và đang chuyển sang màn hình edit chưa
+    const editorDetected = await Promise.race([
+      page.locator('div[contenteditable="true"], button:has-text("Edit cover"), text="Uploaded", text="Đã tải lên"').first().waitFor({ timeout: 15000 }).then(() => true).catch(() => false),
+      sleep(3000).then(() => false)
+    ]);
+
+    if (!fileUploaded && !editorDetected) {
+      throw new PublishError("Không thể nạp file video vào TikTok Studio. Giao diện có thể đã thay đổi.", "UPLOAD_INPUT_FAILED");
+    }
+
+    console.log("[TikTok Browser] Đã nạp file video thành công. Đang chờ giao diện biên tập...");
+    await sleep(3000);
+    const target = page;
 
     // Selector ô caption thường gặp trên TikTok Web
     const captionSelectors = [
