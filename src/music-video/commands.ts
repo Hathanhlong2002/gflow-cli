@@ -4,6 +4,7 @@ import type { Command } from "commander";
 import { BROWSER_CHANNELS, DEFAULT_BROWSER_CHANNEL, type BrowserChannel } from "../browser/session.js";
 import type { FlowAutomation } from "../flow/types.js";
 import { GoogleGeminiTransport, type GeminiMediaTransport } from "../shorts/gemini-transport.js";
+import { uploadTiktokViaBrowser } from "../publish/tiktok-browser.js";
 import { MusicVideoFlowGenerator } from "./flow-generator.js";
 import { GoogleLyriaTransport, type MusicGenerator } from "./lyria-transport.js";
 import { runMusicVideo, type RunMusicVideoInput } from "./orchestrator.js";
@@ -48,6 +49,7 @@ interface RunCommandOptions {
   profile: string;
   headed: boolean;
   browser: BrowserChannel;
+  publishTiktok: boolean;
 }
 
 function parseDuration(value: string): number {
@@ -86,6 +88,7 @@ export function registerMusicVideoCommands(program: Command, dependencies: Music
     .option("--browser <name>", "browser channel for Flow automation", parseBrowser, DEFAULT_BROWSER_CHANNEL)
     .option("--headed", "show browser", true)
     .option("--no-headed", "run browser headless")
+    .option("--publish-tiktok", "automatically upload video to TikTok when ready", false)
     .action(async (command: RunCommandOptions) => {
       const apiKey = (dependencies.environment ?? process.env).GEMINI_API_KEY;
       if (!apiKey) throw new Error("GEMINI_API_KEY is required for music-video generation");
@@ -140,6 +143,20 @@ export function registerMusicVideoCommands(program: Command, dependencies: Music
 
         console.log(`music video ready: ${result.outputPath}`);
         console.log(`${result.duration.toFixed(1)}s, ${result.width}x${result.height}, captions ${result.captionMode}`);
+
+        if (command.publishTiktok) {
+          console.log("[TikTok] Bắt đầu tự động đăng video lên TikTok...");
+          try {
+            const uploadResult = await uploadTiktokViaBrowser({
+              videoPath: result.outputPath,
+              caption: `${command.topic} #nhacAI #vpop #viral #music`,
+              privacy: "public"
+            });
+            console.log(`[TikTok] Đăng video thành công: ${uploadResult.url}`);
+          } catch (publishError) {
+            console.error(`[TikTok] Lỗi khi đăng video lên TikTok: ${(publishError as Error).message}`);
+          }
+        }
       } finally {
         process.off("SIGINT", abort);
         process.off("SIGTERM", abort);
