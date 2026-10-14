@@ -137,14 +137,12 @@ async function readLimitedBody(response: Response): Promise<string> {
   return new TextDecoder().decode(bytes);
 }
 
-function decodeBase64Mp3(data: string): Uint8Array {
-  if (data.length === 0 || data.length % 4 !== 0 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(data)) {
+function decodeBase64Mp3(rawData: string): Uint8Array {
+  const data = rawData.trim();
+  if (data.length === 0 || data.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(data)) {
     throw new LyriaTransportError("Lyria returned invalid base64 audio", "INVALID_BASE64");
   }
   const decoded = Buffer.from(data, "base64");
-  if (decoded.toString("base64") !== data) {
-    throw new LyriaTransportError("Lyria returned invalid base64 audio", "INVALID_BASE64");
-  }
   if (decoded.byteLength === 0 || decoded.byteLength > MAX_AUDIO_BYTES) {
     throw new LyriaTransportError("Lyria decoded audio is too large or empty", "INVALID_AUDIO_SIZE");
   }

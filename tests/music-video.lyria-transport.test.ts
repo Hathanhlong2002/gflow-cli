@@ -126,4 +126,20 @@ describe("Google Lyria transport", () => {
     await expect(transport.generate({ model: "lyria-3.5", plan: validSongPlan() }))
       .resolves.toMatchObject({ mimeType: "audio/mpeg" });
   });
+
+  it("decodes multi-megabyte base64 audio without maximum call stack errors", async () => {
+    // 5MB MP3 audio payload (typical for ~3 minute song)
+    const largeMp3 = new Uint8Array(5 * 1024 * 1024);
+    largeMp3[0] = 0x49; // 'I'
+    largeMp3[1] = 0x44; // 'D'
+    largeMp3[2] = 0x33; // '3'
+    const largeBase64 = Buffer.from(largeMp3).toString("base64");
+    const transport = new GoogleLyriaTransport({
+      apiKey: "secret",
+      fetcher: async () => lyriaResponse({ data: largeBase64 })
+    });
+    const result = await transport.generate({ model: "lyria-3.5", plan: validSongPlan() });
+    expect(result.bytes.byteLength).toBe(5 * 1024 * 1024);
+  });
 });
+

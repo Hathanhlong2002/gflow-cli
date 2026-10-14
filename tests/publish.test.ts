@@ -7,7 +7,7 @@ import { TokenStore, createPkce } from "../src/publish/common.js";
 import type { FetchFn } from "../src/publish/common.js";
 import { AI_DISCLOSURE, buildMetadata, fallbackMetadata, tiktokCaption } from "../src/publish/metadata.js";
 import type { MetadataPlan } from "../src/publish/metadata.js";
-import { Publisher } from "../src/publish/publisher.js";
+import { Publisher, type PublisherOptions } from "../src/publish/publisher.js";
 import { chunkRange, planTiktokChunks, tiktokPrivacyLevel, uploadTiktokVideo } from "../src/publish/tiktok.js";
 import { buildYoutubeResource, uploadYoutubeVideo } from "../src/publish/youtube.js";
 
@@ -382,8 +382,8 @@ describe("Publisher", () => {
     const publisher = new Publisher({
       tokens,
       env: {},
-      tiktokBrowserUpload: mockUpload as any,
-      checkTiktokSession: mockCheck as any
+      tiktokBrowserUpload: mockUpload as unknown as PublisherOptions["tiktokBrowserUpload"],
+      checkTiktokSession: mockCheck as unknown as PublisherOptions["checkTiktokSession"]
     });
 
     const status = await publisher.status();
