@@ -28,15 +28,15 @@ async function main() {
   const status = await publisher.status();
   console.log("Publisher connection status:", JSON.stringify(status, null, 2));
 
-  console.log("\n>>> Đang tiến hành đăng video lên YouTube & TikTok (Chế độ: PUBLIC)...");
+  console.log("\n>>> Đang tiến hành đăng video lên TikTok (Chế độ: PUBLIC)...");
   const results = await publisher.publish({
-    projectRoot: resolve("music-output/15-ngay-truoc-khi-hoa-no"),
-    platforms: ["youtube", "tiktok"],
+    projectRoot: resolve("music-output/tam-biet-tinh-ban-khoi-dau-tinh-yeu"),
+    platforms: ["tiktok"],
     privacy: "public",
     metadata: {
-      title: "15 Ngày Trước Khi Hoa Nở - Mười Lăm Ngày Đơm Hoa",
-      description: "Mọi sự cố gắng phấn đấu cho một mục tiêu duy nhất, như sự chờ đợi không ngừng nghỉ. 15 ngày cuối thấy hoa sẽ nở rộ, dù kết quả hoa nở thành công hay chỉ ngắn ngủi rồi rụng xuống đều đã cố gắng hết sức của bản thân, không một chút nuối tiếc.\n\n#15ngaytruockhihoano #nhacAI #dongluc #musicvideo #flow #veo",
-      tags: ["15ngaytruockhihoano", "nhacAI", "dongluc", "musicvideo", "flow", "veo"]
+      title: "Hơn Cả Tri Kỷ - Tạm Biệt Tình Bạn, Khởi Đầu Tình Yêu",
+      description: "Từ đôi bạn thân cùng sẻ chia thanh xuân đến khoảnh khắc rung động, can đảm bước qua ranh giới bạn bè để bắt đầu tình yêu chân thành.\n\n#HonCaTriKy #TamBietTinhBan #KhoiDauTinhYeu #nhacAI #vpop #anime #love",
+      tags: ["HonCaTriKy", "TamBietTinhBan", "KhoiDauTinhYeu", "nhacAI", "vpop", "anime", "love"]
     },
     madeForKids: false,
     language: "vi-VN",

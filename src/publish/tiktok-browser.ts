@@ -112,12 +112,36 @@ async function dismissOverlays(target: Page | Frame): Promise<void> {
     try {
       const btn = target.locator(sel).first();
       if (await btn.isVisible().catch(() => false)) {
-        await btn.click().catch(() => undefined);
+        await btn.click({ timeout: 1500 }).catch(() => undefined);
         await sleep(200);
       }
     } catch {
       // Ignore
     }
+  }
+}
+
+async function clearPreviousDraftIfShown(page: Page): Promise<void> {
+  try {
+    for (let round = 0; round < 3; round++) {
+      const discardBtns = page.locator('button:has-text("Discard"), button:has-text("Bỏ bản nháp"), button:has-text("Bỏ")');
+      const count = await discardBtns.count();
+      if (count === 0) break;
+      let clicked = false;
+      for (let i = count - 1; i >= 0; i--) {
+        const btn = discardBtns.nth(i);
+        if (await btn.isVisible().catch(() => false)) {
+          console.log(`[TikTok Browser] Xóa bản nháp cũ trên giao diện TikTok (nút ${i + 1}/${count})...`);
+          await btn.click({ timeout: 2000, force: true }).catch(() => undefined);
+          await sleep(1000);
+          clicked = true;
+          break;
+        }
+      }
+      if (!clicked) break;
+    }
+  } catch {
+    // Ignore
   }
 }
 
@@ -225,11 +249,13 @@ export async function uploadTiktokViaBrowser(options: TiktokBrowserUploadOptions
     }
 
     console.log("[TikTok Browser] Đang chờ khung tải video...");
+    await clearPreviousDraftIfShown(page);
     let uploadTarget: { target: Page | Frame; input: ReturnType<Page["locator"]> } | undefined;
     const findDeadline = Date.now() + 30000;
     while (Date.now() < findDeadline) {
       try {
         await dismissOverlays(page);
+        await clearPreviousDraftIfShown(page);
         uploadTarget = await findUploadInput(page);
         if (uploadTarget) break;
       } catch {
@@ -247,7 +273,7 @@ export async function uploadTiktokViaBrowser(options: TiktokBrowserUploadOptions
       ).first();
       if (await selectButton.isVisible({ timeout: 3000 }).catch(() => false)) {
         const [fileChooser] = await Promise.all([
-          page.waitForEvent("filechooser", { timeout: 6000 }),
+          page.waitForEvent("filechooser", { timeout: 8000 }),
           selectButton.click({ force: true })
         ]);
         await fileChooser.setFiles(options.videoPath);
@@ -278,8 +304,8 @@ export async function uploadTiktokViaBrowser(options: TiktokBrowserUploadOptions
 
     // Verification: kiểm tra xem TikTok Studio đã nhận video và đang chuyển sang màn hình edit chưa
     const editorDetected = await Promise.race([
-      page.locator('div[contenteditable="true"], button:has-text("Edit cover"), text="Uploaded", text="Đã tải lên"').first().waitFor({ timeout: 15000 }).then(() => true).catch(() => false),
-      sleep(3000).then(() => false)
+      page.locator('div[contenteditable="true"], button:has-text("Edit cover"), text="Uploaded", text="Đã tải lên"').first().waitFor({ timeout: 25000 }).then(() => true).catch(() => false),
+      sleep(8000).then(() => false)
     ]);
 
     if (!fileUploaded && !editorDetected) {
@@ -302,16 +328,20 @@ export async function uploadTiktokViaBrowser(options: TiktokBrowserUploadOptions
       'textarea'
     ];
 
-    let captionBox: ReturnType<Page["locator"]> | undefined;
+    let captionBox: { target: Page | Frame; locator: ReturnType<Page["locator"]> } | undefined;
     const captionDeadline = Date.now() + 60000;
     while (Date.now() < captionDeadline) {
       await dismissOverlays(target);
-      for (const sel of captionSelectors) {
-        const candidate = target.locator(sel).first();
-        if (await candidate.isVisible().catch(() => false)) {
-          captionBox = candidate;
-          break;
+      const allFrames = [page, ...page.frames()];
+      for (const f of allFrames) {
+        for (const sel of captionSelectors) {
+          const candidate = f.locator(sel).first();
+          if (await candidate.isVisible().catch(() => false)) {
+            captionBox = { target: f, locator: candidate };
+            break;
+          }
         }
+        if (captionBox) break;
       }
       if (captionBox) break;
       await sleep(1500);
@@ -319,7 +349,7 @@ export async function uploadTiktokViaBrowser(options: TiktokBrowserUploadOptions
 
     if (captionBox) {
       console.log("[TikTok Browser] Đang nhập tiêu đề và hashtag...");
-      await captionBox.click().catch(() => undefined);
+      await captionBox.locator.click().catch(() => undefined);
       // Xóa nội dung mặc định nếu có (TikTok có thể tự điền tên file làm caption)
       await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A").catch(() => undefined);
       await page.keyboard.press("Backspace").catch(() => undefined);
@@ -344,32 +374,38 @@ export async function uploadTiktokViaBrowser(options: TiktokBrowserUploadOptions
 
     // Chờ quá trình upload hoàn tất (nút Post enable và video upload xong)
     console.log("[TikTok Browser] Đang đợi video upload hoàn tất...");
+    // Dùng regex để khớp chính xác nút "Post" / "Đăng", tránh match trúng tab "Posts"
     const postButtonSelectors = [
-      'button:has-text("Post")',
-      'button:has-text("Đăng")',
-      'button[type="button"]:has-text("Post")',
-      'button[type="button"]:has-text("Đăng")',
+      'button:has-text(/^Post$/i)',
+      'button:has-text(/^Đăng$/i)',
+      'button[type="button"]:has-text(/^Post$/i)',
+      'button[type="button"]:has-text(/^Đăng$/i)',
+      'button.btn-post',
       '.btn-post'
     ];
 
-    let postButton: ReturnType<Page["locator"]> | undefined;
+    let postButton: { target: Page | Frame; locator: ReturnType<Page["locator"]> } | undefined;
     const uploadDeadline = Date.now() + timeoutMs;
     while (Date.now() < uploadDeadline) {
       await dismissOverlays(target);
 
-      for (const sel of postButtonSelectors) {
-        const btn = target.locator(sel).first();
-        if (await btn.isVisible().catch(() => false)) {
-          await btn.scrollIntoViewIfNeeded().catch(() => undefined);
-          const isEnabled = await btn.isEnabled().catch(() => false);
-          const isAriaDisabled = await btn.getAttribute("aria-disabled").catch(() => null);
-          const className = (await btn.getAttribute("class").catch(() => "")) || "";
-          const isDisabledClass = className.includes("disabled") || isAriaDisabled === "true";
-          if (isEnabled && !isDisabledClass) {
-            postButton = btn;
-            break;
+      const allFrames = [page, ...page.frames()];
+      for (const f of allFrames) {
+        for (const sel of postButtonSelectors) {
+          const btn = f.locator(sel).first();
+          if (await btn.isVisible().catch(() => false)) {
+            await btn.scrollIntoViewIfNeeded().catch(() => undefined);
+            const isEnabled = await btn.isEnabled().catch(() => false);
+            const isAriaDisabled = await btn.getAttribute("aria-disabled").catch(() => null);
+            const className = (await btn.getAttribute("class").catch(() => "")) || "";
+            const isDisabledClass = className.includes("disabled") || isAriaDisabled === "true";
+            if (isEnabled && !isDisabledClass) {
+              postButton = { target: f, locator: btn };
+              break;
+            }
           }
         }
+        if (postButton) break;
       }
       if (postButton) break;
 
@@ -390,7 +426,7 @@ export async function uploadTiktokViaBrowser(options: TiktokBrowserUploadOptions
     }
 
     console.log("[TikTok Browser] Nhấn nút Đăng video...");
-    await postButton.click();
+    await postButton.locator.click();
     await sleep(2000);
 
     // Xử lý modal xác nhận phụ nếu có (Post now / Đăng ngay)
@@ -431,12 +467,10 @@ export async function uploadTiktokViaBrowser(options: TiktokBrowserUploadOptions
         }
       }
       if (confirmed) break;
-      if (page.url().includes("/manage") || page.url().includes("/content") || page.url().includes("/tiktokstudio")) {
-        if (!page.url().includes("/upload")) {
-          confirmed = true;
-          postUrl = page.url();
-          break;
-        }
+      if (page.url().includes("/manage") || page.url().includes("/content")) {
+        confirmed = true;
+        postUrl = page.url();
+        break;
       }
       await sleep(1500);
     }
