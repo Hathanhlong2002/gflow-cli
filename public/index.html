@@ -167,10 +167,16 @@
       </div>
       <button id="submitBtn">Tạo video</button>
     </div>
-    <label class="checkline" style="margin-top:10px">
-      <input type="checkbox" id="autoPublishTiktok" checked />
-      Tự động đăng lên TikTok khi tạo xong video (yêu cầu đã đăng nhập TikTok)
-    </label>
+    <div style="display:flex;gap:20px;margin-top:10px;flex-wrap:wrap">
+      <label class="checkline">
+        <input type="checkbox" id="autoPublishTiktok" checked />
+        Tự động đăng lên TikTok khi tạo xong
+      </label>
+      <label class="checkline">
+        <input type="checkbox" id="autoPublishYoutube" checked />
+        Tự động đăng lên YouTube khi tạo xong
+      </label>
+    </div>
 
     <div id="progress">
       <div class="stage-line" id="stageLine"><span class="dot"></span><span id="stageText">Đang bắt đầu…</span></div>

@@ -119,11 +119,12 @@ async function submitTopic(topic, duration) {
   stageLine.classList.remove("done", "error");
   stageText.textContent = "Đang bắt đầu…";
 
-  const autoPublish = document.getElementById("autoPublishTiktok")?.checked ?? false;
+  const autoPublishTiktok = document.getElementById("autoPublishTiktok")?.checked ?? false;
+  const autoPublishYoutube = document.getElementById("autoPublishYoutube")?.checked ?? false;
   const res = await fetch("/api/runs", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ topic, duration, autoPublishTiktok: autoPublish })
+    body: JSON.stringify({ topic, duration, autoPublishTiktok, autoPublishYoutube })
   });
   const data = await res.json();
   if (!res.ok) {

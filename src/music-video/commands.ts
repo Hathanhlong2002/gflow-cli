@@ -4,7 +4,8 @@ import type { Command } from "commander";
 import { BROWSER_CHANNELS, DEFAULT_BROWSER_CHANNEL, type BrowserChannel } from "../browser/session.js";
 import type { FlowAutomation } from "../flow/types.js";
 import { GoogleGeminiTransport, type GeminiMediaTransport } from "../shorts/gemini-transport.js";
-import { uploadTiktokViaBrowser } from "../publish/tiktok-browser.js";
+import { Publisher } from "../publish/publisher.js";
+import { TokenStore, type Platform, type Privacy } from "../publish/common.js";
 import { MusicVideoFlowGenerator } from "./flow-generator.js";
 import { GoogleLyriaTransport, type MusicGenerator } from "./lyria-transport.js";
 import { runMusicVideo, type RunMusicVideoInput } from "./orchestrator.js";
@@ -30,6 +31,7 @@ export interface MusicVideoCommandDependencies {
   musicVideoMedia?: GeminiMediaTransport;
   musicVideoProbe?: RunMusicVideoInput["probeMedia"];
   musicVideoRenderer?: RunMusicVideoInput["renderer"];
+  publisher?: Publisher;
   flowAutomationFactory?: (options: {
     profile: string;
     headed: boolean;
@@ -49,7 +51,11 @@ interface RunCommandOptions {
   profile: string;
   headed: boolean;
   browser: BrowserChannel;
+  publish: boolean;
+  publishAll: boolean;
   publishTiktok: boolean;
+  publishYoutube: boolean;
+  publishPrivacy: string;
 }
 
 function parseDuration(value: string): number {
@@ -88,7 +94,11 @@ export function registerMusicVideoCommands(program: Command, dependencies: Music
     .option("--browser <name>", "browser channel for Flow automation", parseBrowser, DEFAULT_BROWSER_CHANNEL)
     .option("--headed", "show browser", true)
     .option("--no-headed", "run browser headless")
+    .option("--publish", "automatically upload video to all connected platforms (YouTube and TikTok) when ready", false)
+    .option("--publish-all", "alias for --publish", false)
     .option("--publish-tiktok", "automatically upload video to TikTok when ready", false)
+    .option("--publish-youtube", "automatically upload video to YouTube when ready", false)
+    .option("--publish-privacy <level>", "privacy level for published videos: public, unlisted, or private", "public")
     .action(async (command: RunCommandOptions) => {
       const apiKey = (dependencies.environment ?? process.env).GEMINI_API_KEY;
       if (!apiKey) throw new Error("GEMINI_API_KEY is required for music-video generation");
@@ -144,17 +154,65 @@ export function registerMusicVideoCommands(program: Command, dependencies: Music
         console.log(`music video ready: ${result.outputPath}`);
         console.log(`${result.duration.toFixed(1)}s, ${result.width}x${result.height}, captions ${result.captionMode}`);
 
-        if (command.publishTiktok) {
-          console.log("[TikTok] Bắt đầu tự động đăng video lên TikTok...");
+        const env = (dependencies.environment ?? process.env) as Record<string, string>;
+        const autoPublishEnv = env.AUTO_PUBLISH === "true";
+        const autoPublishYoutubeEnv = env.AUTO_PUBLISH_YOUTUBE === "true";
+        const autoPublishTiktokEnv = env.AUTO_PUBLISH_TIKTOK === "true";
+
+        const platforms: Platform[] = [];
+        if (command.publish || command.publishAll || autoPublishEnv) {
+          platforms.push("youtube", "tiktok");
+        } else {
+          if (command.publishYoutube || autoPublishYoutubeEnv) platforms.push("youtube");
+          if (command.publishTiktok || autoPublishTiktokEnv) platforms.push("tiktok");
+        }
+
+        if (platforms.length > 0) {
+          console.log(`[Publish] Bắt đầu tự động đăng video lên: ${platforms.join(", ")}...`);
           try {
-            const uploadResult = await uploadTiktokViaBrowser({
-              videoPath: result.outputPath,
-              caption: `${command.topic} #nhacAI #vpop #viral #music`,
-              privacy: "public"
+            const tokenStore = new TokenStore(resolve(env.GFLOW_DATA_DIR ?? ".gflow", "publish-tokens.json"));
+            const publisher = dependencies.publisher ?? new Publisher({
+              tokens: tokenStore,
+              env,
+              tiktokProfile: command.profile === "default" ? "tiktok" : command.profile,
+              headed: command.headed
             });
-            console.log(`[TikTok] Đăng video thành công: ${uploadResult.url}`);
+
+            let title = command.topic;
+            let description = `${command.topic}\n\n#nhacAI #vpop #viral #music`;
+            let tags = ["nhacAI", "vpop", "viral", "music"];
+
+            try {
+              const state = await store.load();
+              if (state.planHash) {
+                const plan = await store.loadPlan(state.planHash);
+                title = `${plan.title} - ${plan.topic.slice(0, 50)}`;
+                description = `${plan.topic}\n\nThể loại: ${plan.genre}\nMood: ${plan.mood}\n\n#nhacAI #vpop #viral #music`;
+                tags = ["nhacAI", "vpop", "viral", "music", plan.genre.split(" ")[0].toLowerCase()].filter(Boolean);
+              }
+            } catch {
+              // fallback to topic
+            }
+
+            const publishResults = await publisher.publish({
+              projectRoot: store.paths().root,
+              platforms,
+              privacy: (command.publishPrivacy as Privacy) || "public",
+              metadata: { title, description, tags },
+              madeForKids: false,
+              language: command.language || "vi-VN",
+              force: true
+            });
+
+            for (const pub of publishResults) {
+              if (pub.status === "published") {
+                console.log(`[Publish] Đăng video thành công lên ${pub.platform.toUpperCase()}: ${pub.url ?? pub.id}`);
+              } else {
+                console.warn(`[Publish] Đăng video lên ${pub.platform.toUpperCase()} không thành công: ${pub.error ?? "lỗi không xác định"}`);
+              }
+            }
           } catch (publishError) {
-            console.error(`[TikTok] Lỗi khi đăng video lên TikTok: ${(publishError as Error).message}`);
+            console.error(`[Publish] Lỗi khi đăng video: ${(publishError as Error).message}`);
           }
         }
       } finally {

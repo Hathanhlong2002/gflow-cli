@@ -158,7 +158,15 @@ async function pollProgress(run: RunState): Promise<void> {
   }
 }
 
-function startRun(topic: string, duration: number, resumeIfExists: boolean, outDir: string, id: string, autoPublishTiktok: boolean = false): RunState {
+function startRun(
+  topic: string,
+  duration: number,
+  resumeIfExists: boolean,
+  outDir: string,
+  id: string,
+  autoPublishTiktok: boolean = false,
+  autoPublishYoutube: boolean = false
+): RunState {
   const run: RunState = {
     id,
     topic,
@@ -186,7 +194,12 @@ function startRun(topic: string, duration: number, resumeIfExists: boolean, outD
     "vi-VN"
   ];
   if (resumeIfExists) args.push("--resume");
-  if (autoPublishTiktok) args.push("--publish-tiktok");
+  if (autoPublishTiktok && autoPublishYoutube) {
+    args.push("--publish");
+  } else {
+    if (autoPublishTiktok) args.push("--publish-tiktok");
+    if (autoPublishYoutube) args.push("--publish-youtube");
+  }
 
   const child = spawn("npx", args, { cwd: REPO_ROOT, env: childEnvironment() });
   const appendLog = (chunk: Buffer): void => {
@@ -593,7 +606,14 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       sendJson(res, 409, { error: "Hãy hoàn tất đăng nhập Google Flow và bấm Kiểm tra lại trước khi tạo video.", code: "FLOW_LOGIN_PENDING" });
       return;
     }
-    const body = (await readRequestBody(req)) as { topic?: string; duration?: number; autoPublishTiktok?: boolean };
+    const body = (await readRequestBody(req)) as {
+      topic?: string;
+      duration?: number;
+      autoPublishTiktok?: boolean;
+      autoPublishYoutube?: boolean;
+      autoPublishAll?: boolean;
+      autoPublish?: boolean;
+    };
     const topic = String(body.topic ?? "").trim();
     if (topic.length < 3 || topic.length > 300) {
       sendJson(res, 400, { error: "Chủ đề phải từ 3 đến 300 ký tự" });
@@ -619,7 +639,9 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     }
 
     await mkdir(outDir, { recursive: true });
-    startRun(topic, duration, Boolean(existingProject), outDir, id, body.autoPublishTiktok === true);
+    const autoPublishTiktok = body.autoPublishTiktok === true || body.autoPublishAll === true || body.autoPublish === true;
+    const autoPublishYoutube = body.autoPublishYoutube === true || body.autoPublishAll === true || body.autoPublish === true;
+    startRun(topic, duration, Boolean(existingProject), outDir, id, autoPublishTiktok, autoPublishYoutube);
     sendJson(res, 200, { id });
     return;
   }

@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createProgram } from "../src/cli.js";
 import type { RunMusicVideoInput } from "../src/music-video/orchestrator.js";
+import type { Publisher } from "../src/publish/publisher.js";
 
 describe("music-video CLI", () => {
   const roots: string[] = [];
@@ -126,4 +127,46 @@ describe("music-video CLI", () => {
     expect(received?.resume).toBe(true);
     expect(flowAutomationFactory).toHaveBeenCalledWith({ profile: "music", browser: "chromium", headed: false });
   });
+
+  it("triggers automatic publish to YouTube and TikTok when --publish is set", async () => {
+    const root = await newRoot();
+    const runner = vi.fn(async (input: RunMusicVideoInput) => ({
+      stage: "READY" as const,
+      outputPath: input.store.paths().final,
+      reportPath: input.store.paths().mediaReport,
+      duration: 180,
+      bytes: 20,
+      sha256: "a".repeat(64),
+      width: 1920,
+      height: 1080,
+      captionMode: "embedded" as const
+    }));
+    const mockPublish = vi.fn(async () => [
+      { platform: "youtube" as const, status: "published" as const, id: "yt-123", url: "https://youtu.be/yt-123", privacy: "public" as const, at: "" },
+      { platform: "tiktok" as const, status: "published" as const, id: "tt-456", url: "https://tiktok.com/tt-456", privacy: "public" as const, at: "" }
+    ]);
+    const mockPublisher = { publish: mockPublish } as unknown as Publisher;
+
+    const program = createProgram({
+      environment: { GEMINI_API_KEY: "test-key" },
+      musicVideoRunner: runner,
+      flowAutomationFactory: vi.fn(),
+      publisher: mockPublisher
+    });
+
+    await program.parseAsync([
+      "node", "gflow", "music-video", "run",
+      "--topic", "Tình yêu",
+      "--out", root,
+      "--publish"
+    ]);
+
+    expect(runner).toHaveBeenCalledOnce();
+    expect(mockPublish).toHaveBeenCalledOnce();
+    expect(mockPublish).toHaveBeenCalledWith(expect.objectContaining({
+      platforms: ["youtube", "tiktok"],
+      privacy: "public"
+    }));
+  });
 });
+
